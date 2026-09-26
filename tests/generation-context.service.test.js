@@ -44,11 +44,12 @@ function completeResearchContext(overrides = {}) {
 test("builds generation context from complete company and role research", () => {
   const context = buildGenerationContext(completeResearchContext());
 
-  assert.deepEqual(Object.keys(context), ["company", "role", "research"]);
+  assert.deepEqual(Object.keys(context), ["company", "role", "requirements", "research"]);
   assert.equal(context.company.name, "Acme Systems");
   assert.equal(context.role.requested_role, "Senior Software Engineer");
   assert.equal(context.role.matching_role_found, true);
   assert.equal(context.role.job_source, "company_public_page");
+  assert.deepEqual(context.requirements, []);
 });
 
 test("preserves public JD and user JD when a public role was found", () => {
@@ -131,6 +132,19 @@ test("accepts thin research and preserves empty arrays and meaningful null value
   assert.deepEqual(context.research.sources, []);
   assert.deepEqual(context.research.pages_used, []);
   assert.deepEqual(context.research.research_gaps, ["limited_company_information"]);
+  assert.deepEqual(context.requirements, []);
+});
+
+test("adds deterministic requirements derived from the original user JD", () => {
+  const research = completeResearchContext();
+  research.role.user_jd = "Required: Experience with AWS.\nPreferred: Familiarity with Terraform.";
+  const context = buildGenerationContext(research);
+
+  assert.deepEqual(context.requirements, [
+    { id: "r1", text: "Experience with AWS.", kind: "technical", priority: "must" },
+    { id: "r2", text: "Familiarity with Terraform.", kind: "technical", priority: "nice" },
+  ]);
+  assert.equal(context.role.user_jd, research.role.user_jd);
 });
 
 test("rejects malformed input with structured validation errors", () => {

@@ -1,4 +1,5 @@
 const { AppError } = require("../utils/errors");
+const { extractRequirements } = require("./requirement-extraction.service");
 
 const COMPANY_TEXT_FIELDS = [
   "summary",
@@ -122,6 +123,9 @@ function validateResearchContext(context) {
 
 function buildGenerationContext(researchContext) {
   validateResearchContext(researchContext);
+  const requirements = researchContext.role.user_jd.trim()
+    ? extractRequirements({ role: researchContext.role.requested_role, userJd: researchContext.role.user_jd }).requirements
+    : [];
 
   const company = {
     name: researchContext.company.name,
@@ -147,6 +151,7 @@ function buildGenerationContext(researchContext) {
   return {
     company,
     role,
+    requirements,
     research: {
       sources: cloneData(researchContext.research.sources),
       pages_used: cloneData(researchContext.research.pages_used),
