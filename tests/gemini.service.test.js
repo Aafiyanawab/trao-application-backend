@@ -31,6 +31,7 @@ function generationContext() {
       public_jd: null,
       user_jd: "Build software.",
     },
+    requirements: [{ id: "r1", text: "Build software", kind: "technical", priority: "must" }],
     research: { sources: [], pages_used: [], research_gaps: [], warnings: [] },
   };
 }
@@ -58,6 +59,14 @@ function generatedContent() {
     interviewer_questions: ["What does success look like in this role?"],
     interview_tips: ["Use specific examples."],
     follow_up_guidance: ["Send a concise thank-you note."],
+    flashcards: [
+      {
+        id: "f1",
+        front: "What is a software service?",
+        back: "A deployable component that provides a defined capability.",
+        requirement_ids: ["r1"],
+      },
+    ],
   };
 }
 
@@ -136,8 +145,29 @@ test("uses only the explicitly configured model and Gemini structured-output con
     const body = JSON.parse(requestCalls[0].requestOptions.body);
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(body.generationConfig.responseSchema, GENERATION_RESPONSE_SCHEMA);
+    assert.deepEqual(GENERATION_RESPONSE_SCHEMA.properties.flashcards.items.required, [
+      "id", "front", "back", "requirement_ids",
+    ]);
     assert.ok(QUESTION_CATEGORIES.includes("company_fit"));
   });
+});
+
+test("rejects malformed flashcards from Gemini", async () => {
+  const invalid = generatedContent();
+  invalid.flashcards[0].requirement_ids = [];
+  const service = createGeminiService({
+    getApiKey: () => "test-secret-key",
+    request: async () => successfulResponse(invalid),
+  });
+
+  await assert.rejects(
+    service.generateInterviewContent(generationContext()),
+    (error) => {
+      assert.equal(error.code, "GENERATION_SCHEMA_ERROR");
+      assert.ok(error.details.some((detail) => detail.path === "flashcards[0].requirement_ids"));
+      return true;
+    },
+  );
 });
 
 test("rejects a missing GEMINI_MODEL without falling back", async () => {
@@ -308,5 +338,6 @@ test("does not expose credentials in successful return data", async () => {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ]);
 });

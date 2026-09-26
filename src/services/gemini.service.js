@@ -26,6 +26,18 @@ const questionSchema = {
   propertyOrdering: ["id", "question", "category", "difficulty", "rationale"],
 };
 
+const flashcardSchema = {
+  type: "OBJECT",
+  properties: {
+    id: { type: "STRING" },
+    front: { type: "STRING" },
+    back: { type: "STRING" },
+    requirement_ids: { type: "ARRAY", items: { type: "STRING" }, minItems: 1 },
+  },
+  required: ["id", "front", "back", "requirement_ids"],
+  propertyOrdering: ["id", "front", "back", "requirement_ids"],
+};
+
 const GENERATION_RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
@@ -34,6 +46,7 @@ const GENERATION_RESPONSE_SCHEMA = {
     interviewer_questions: { type: "ARRAY", items: { type: "STRING" } },
     interview_tips: { type: "ARRAY", items: { type: "STRING" } },
     follow_up_guidance: { type: "ARRAY", items: { type: "STRING" } },
+    flashcards: { type: "ARRAY", items: flashcardSchema },
   },
   required: [
     "technical_questions",
@@ -41,6 +54,7 @@ const GENERATION_RESPONSE_SCHEMA = {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ],
   propertyOrdering: [
     "technical_questions",
@@ -48,6 +62,7 @@ const GENERATION_RESPONSE_SCHEMA = {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ],
 };
 
@@ -62,6 +77,9 @@ function appError(message, code, statusCode, details) {
 function validateGenerationContext(input) {
   if (!isPlainObject(input) || !isPlainObject(input.company) || !isPlainObject(input.role) || !isPlainObject(input.research)) {
     throw appError("Generation context must contain company, role, and research objects", "VALIDATION_ERROR", 400);
+  }
+  if (!Array.isArray(input.requirements)) {
+    throw appError("Generation context requirements must be an array", "VALIDATION_ERROR", 400);
   }
 }
 
@@ -108,6 +126,35 @@ function validateGenerationResponse(value) {
         }
       });
     }
+  }
+
+  if (!Array.isArray(value.flashcards)) {
+    details.push({ path: "flashcards", message: "must be an array" });
+  } else {
+    value.flashcards.forEach((flashcard, index) => {
+      const path = `flashcards[${index}]`;
+      if (!isPlainObject(flashcard)) {
+        details.push({ path, message: "must be an object" });
+        return;
+      }
+      for (const field of ["id", "front", "back"]) {
+        if (typeof flashcard[field] !== "string" || flashcard[field].trim() === "") {
+          details.push({ path: `${path}.${field}`, message: "must be a non-empty string" });
+        }
+      }
+      if (!Array.isArray(flashcard.requirement_ids) || flashcard.requirement_ids.length === 0) {
+        details.push({ path: `${path}.requirement_ids`, message: "must be a non-empty array" });
+      } else {
+        flashcard.requirement_ids.forEach((requirementId, requirementIndex) => {
+          if (typeof requirementId !== "string" || requirementId.trim() === "") {
+            details.push({
+              path: `${path}.requirement_ids[${requirementIndex}]`,
+              message: "must be a non-empty string",
+            });
+          }
+        });
+      }
+    });
   }
 
   if (details.length > 0) {

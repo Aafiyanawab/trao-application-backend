@@ -27,12 +27,32 @@ function validKit() {
     interviewer_questions: ["How does the team measure success in this role?"],
     interview_tips: ["Prepare one concise example relevant to the role."],
     follow_up_guidance: ["Be ready to explain your trade-offs and outcome."],
+    flashcards: [],
   };
 }
 
-function assertInvalid(kit, expectedPath) {
+function kitWithFlashcard(flashcard) {
+  const kit = validKit();
+  kit.flashcards = [flashcard];
+  return kit;
+}
+
+const validFlashcard = {
+  id: "f1",
+  front: "What is Docker?",
+  back: "Docker packages applications into containers.",
+  requirement_ids: ["r1"],
+};
+
+const requirementOptions = {
+  generationContext: {
+    requirements: [{ id: "r1", text: "Docker knowledge", kind: "technical", priority: "must" }],
+  },
+};
+
+function assertInvalid(kit, expectedPath, options = requirementOptions) {
   assert.throws(
-    () => validateGeneratedInterviewKit(kit),
+    () => validateGeneratedInterviewKit(kit, options),
     (error) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.code, "INVALID_GENERATED_KIT");
@@ -49,7 +69,7 @@ function assertInvalid(kit, expectedPath) {
 test("accepts a valid complete kit and returns the original unchanged", () => {
   const kit = validKit();
 
-  assert.equal(validateGeneratedInterviewKit(kit), kit);
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
 });
 
 test("rejects null, primitives, and arrays as the top-level result", () => {
@@ -65,6 +85,7 @@ test("rejects each missing required section", () => {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ]) {
     const kit = validKit();
     delete kit[section];
@@ -79,6 +100,7 @@ test("rejects each non-array section", () => {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ]) {
     const kit = validKit();
     kit[section] = {};
@@ -93,15 +115,110 @@ test("allows empty content arrays", () => {
   kit.interviewer_questions = [];
   kit.interview_tips = [];
   kit.follow_up_guidance = [];
+  kit.flashcards = [];
 
-  assert.equal(validateGeneratedInterviewKit(kit), kit);
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
+});
+
+test("accepts an Appendix A flashcard linked to an existing requirement", () => {
+  assert.equal(validateGeneratedInterviewKit(kitWithFlashcard(validFlashcard), requirementOptions).flashcards[0], validFlashcard);
+});
+
+test("rejects malformed flashcard objects", () => {
+  for (const flashcard of [null, "card", 1, []]) {
+    assertInvalid(kitWithFlashcard(flashcard), "flashcards[0]");
+  }
+});
+
+test("rejects missing, empty, and non-string flashcard IDs", () => {
+  for (const flashcard of [
+    { ...validFlashcard, id: undefined },
+    { ...validFlashcard, id: " " },
+    { ...validFlashcard, id: 7 },
+  ]) {
+    assertInvalid(kitWithFlashcard(flashcard), "flashcards[0].id");
+  }
+});
+
+test("rejects empty flashcard front or back", () => {
+  for (const field of ["front", "back"]) {
+    assertInvalid(kitWithFlashcard({ ...validFlashcard, [field]: "  " }), `flashcards[0].${field}`);
+  }
+});
+
+test("rejects missing flashcard front or back", () => {
+  for (const field of ["front", "back"]) {
+    const flashcard = { ...validFlashcard };
+    delete flashcard[field];
+    assertInvalid(kitWithFlashcard(flashcard), `flashcards[0].${field}`);
+  }
+});
+
+test("rejects missing, empty, or non-array flashcard requirement IDs", () => {
+  for (const requirementIds of [undefined, [], "r1"]) {
+    assertInvalid(
+      kitWithFlashcard({ ...validFlashcard, requirement_ids: requirementIds }),
+      "flashcards[0].requirement_ids",
+    );
+  }
+});
+
+test("rejects malformed and unknown flashcard requirement IDs", () => {
+  for (const requirementIds of [[" "], [7], ["r999"]]) {
+    assertInvalid(
+      kitWithFlashcard({ ...validFlashcard, requirement_ids: requirementIds }),
+      "flashcards[0].requirement_ids[0]",
+    );
+  }
+});
+
+test("accepts flashcards linked to multiple real requirements", () => {
+  const requirements = [
+    { id: "r1", text: "Docker knowledge", kind: "technical", priority: "must" },
+    { id: "r2", text: "Kubernetes experience", kind: "technical", priority: "nice" },
+  ];
+  const kit = kitWithFlashcard({ ...validFlashcard, requirement_ids: ["r1", "r2"] });
+
+  assert.equal(validateGeneratedInterviewKit(kit, { generationContext: { requirements } }), kit);
+});
+
+test("rejects duplicate flashcard IDs", () => {
+  const kit = validKit();
+  kit.flashcards = [validFlashcard, { ...validFlashcard, front: "A different front?", back: "A different back." }];
+
+  assertInvalid(kit, "flashcards[1].id");
+});
+
+test("rejects duplicate flashcard content after normalization", () => {
+  const kit = validKit();
+  kit.flashcards = [
+    validFlashcard,
+    { ...validFlashcard, id: "f2", front: "  what   is docker? ", back: "docker packages applications into containers." },
+  ];
+
+  assertInvalid(kit, "flashcards[1].front");
+});
+
+test("does not require flashcards when there are no requirements", () => {
+  const kit = validKit();
+  kit.flashcards = [];
+
+  assert.equal(validateGeneratedInterviewKit(kit, { generationContext: { requirements: [] } }), kit);
+});
+
+test("rejects cards referencing fake IDs when there are no requirements", () => {
+  assertInvalid(
+    kitWithFlashcard(validFlashcard),
+    "flashcards[0].requirement_ids[0]",
+    { generationContext: { requirements: [] } },
+  );
 });
 
 test("accepts a valid question using the Gemini contract", () => {
   const kit = validKit();
   kit.non_technical_questions = [];
 
-  assert.equal(validateGeneratedInterviewKit(kit), kit);
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
 });
 
 test("rejects malformed question objects", () => {
@@ -205,7 +322,7 @@ test("allows similar but non-identical questions", () => {
   const kit = validKit();
   kit.non_technical_questions[0].question = "How would you design a resilient API for mobile clients?";
 
-  assert.equal(validateGeneratedInterviewKit(kit), kit);
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
 });
 
 test("validates interviewer questions as non-empty strings", () => {
@@ -232,7 +349,7 @@ test("validates follow-up guidance as non-empty strings", () => {
 test("does not require GitHub, certifications, projects, or skills", () => {
   const kit = validKit();
 
-  assert.equal(validateGeneratedInterviewKit(kit), kit);
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
 });
 
 test("accepts user-provided JD fallback and thin research options", () => {
@@ -263,11 +380,24 @@ test("rejects obvious credential material without echoing the secret", () => {
   );
 });
 
+test("rejects credential-like material in flashcard content without echoing it", () => {
+  const kit = kitWithFlashcard({ ...validFlashcard, back: "GITHUB_TOKEN=ghp_12345678901234567890abcdefghijkl" });
+
+  assert.throws(
+    () => validateGeneratedInterviewKit(kit, requirementOptions),
+    (error) => {
+      assert.equal(error.code, "INVALID_GENERATED_KIT");
+      assert.equal(JSON.stringify(error.details).includes("ghp_"), false);
+      return true;
+    },
+  );
+});
+
 test("does not mutate the generated kit", () => {
   const kit = validKit();
   const before = structuredClone(kit);
 
-  validateGeneratedInterviewKit(kit);
+  validateGeneratedInterviewKit(kit, requirementOptions);
 
   assert.deepEqual(kit, before);
 });
@@ -277,7 +407,7 @@ test("returns deterministic validation behavior for identical input", () => {
   invalid.technical_questions[0].difficulty = 5;
   const getDetails = () => {
     try {
-      validateGeneratedInterviewKit(invalid);
+      validateGeneratedInterviewKit(invalid, requirementOptions);
       return null;
     } catch (error) {
       return { code: error.code, statusCode: error.statusCode, details: error.details };

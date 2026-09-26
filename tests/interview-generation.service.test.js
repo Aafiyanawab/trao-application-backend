@@ -28,6 +28,7 @@ function generationContext(overrides = {}) {
       public_jd: "Build reliable platform services.",
       user_jd: "User JD: build APIs and maintain Node.js services.",
     },
+    requirements: [{ id: "r1", text: "Build APIs", kind: "technical", priority: "must" }],
     research: {
       sources: [{ url: "https://acme.example.com/about", type: "about", text: "Creates routing tools." }],
       pages_used: ["https://acme.example.com/about"],
@@ -49,6 +50,12 @@ function contractResult() {
     interviewer_questions: ["How does the team define success for this role?"],
     interview_tips: ["Prepare a concrete API example from your experience."],
     follow_up_guidance: ["Be ready to explain your design trade-offs."],
+    flashcards: [{
+      id: "f1",
+      front: "What is an API?",
+      back: "A defined interface through which software components communicate.",
+      requirement_ids: ["r1"],
+    }],
   };
 }
 
@@ -265,10 +272,30 @@ test("requests all required interview content categories", async () => {
     "interviewer_questions",
     "interview_tips",
     "follow_up_guidance",
+    "flashcards",
   ]) {
     assert.ok(instructions.includes(requestedContent));
     assert.ok(Array.isArray(result[requestedContent]));
   }
+});
+
+test("requests grounded requirement-linked flashcards and returns none without requirements", async () => {
+  const context = generationContext();
+  const withRequirement = mockService();
+  await withRequirement.generateInterviewKit(context);
+  const instructions = withRequirement.calls[0].generation_instructions.join(" ");
+
+  assert.deepEqual(withRequirement.calls[0].generation_context.requirements, context.requirements);
+  assert.ok(instructions.includes("flashcards"));
+  assert.ok(instructions.includes("requirement_ids"));
+  assert.ok(instructions.includes("Never create placeholder or invented requirement IDs"));
+  assert.ok(instructions.includes("Do not invent candidate experience"));
+  assert.ok(instructions.includes("Certifications are optional"));
+  assert.ok(instructions.includes("If generation_context.requirements is empty"));
+
+  const withoutRequirements = mockService();
+  await withoutRequirements.generateInterviewKit(generationContext({ requirements: [] }));
+  assert.deepEqual(withoutRequirements.calls[0].generation_context.requirements, []);
 });
 
 test("does not invent candidate or company facts in the integration input", async () => {

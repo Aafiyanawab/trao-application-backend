@@ -3,6 +3,7 @@ const { QUESTION_CATEGORIES } = require("./gemini.service");
 
 const QUESTION_SECTIONS = ["technical_questions", "non_technical_questions"];
 const TEXT_SECTIONS = ["interviewer_questions", "interview_tips", "follow_up_guidance"];
+const FLASHCARD_SECTION = "flashcards";
 const SECRET_PATTERNS = [
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/,
   /\bAIza[0-9A-Za-z_-]{30,}\b/,
@@ -28,13 +29,14 @@ function normalizedQuestionText(question) {
   return question.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function validateGeneratedInterviewKit(generatedKit) {
+function validateGeneratedInterviewKit(generatedKit, options = {}) {
   const details = [];
   if (!isPlainObject(generatedKit)) {
     throw invalidKit([{ path: "generatedKit", message: "must be an object" }]);
   }
 
-  for (const section of [...QUESTION_SECTIONS, ...TEXT_SECTIONS]) {
+  const sections = [...QUESTION_SECTIONS, ...TEXT_SECTIONS, FLASHCARD_SECTION];
+  for (const section of sections) {
     if (!Object.prototype.hasOwnProperty.call(generatedKit, section)) {
       details.push({ path: section, message: "is required" });
     } else if (!Array.isArray(generatedKit[section])) {
@@ -44,6 +46,8 @@ function validateGeneratedInterviewKit(generatedKit) {
 
   const seenIds = new Map();
   const seenQuestions = new Map();
+  const seenFlashcardIds = new Map();
+  const seenFlashcardContent = new Map();
   const textValues = [];
 
   for (const section of QUESTION_SECTIONS) {
@@ -110,6 +114,75 @@ function validateGeneratedInterviewKit(generatedKit) {
         details.push({ path, message: "must be a non-empty string" });
       } else {
         textValues.push({ path, value: item });
+      }
+    });
+  }
+
+  const requirements = options?.generationContext?.requirements;
+  const knownRequirementIds = new Set();
+  if (requirements !== undefined && !Array.isArray(requirements)) {
+    details.push({ path: "generationContext.requirements", message: "must be an array" });
+  } else if (Array.isArray(requirements)) {
+    requirements.forEach((requirement, index) => {
+      const path = `generationContext.requirements[${index}].id`;
+      if (!isPlainObject(requirement) || typeof requirement.id !== "string" || requirement.id.trim() === "") {
+        details.push({ path, message: "must be a non-empty string" });
+      } else if (knownRequirementIds.has(requirement.id)) {
+        details.push({ path, message: "must be unique" });
+      } else {
+        knownRequirementIds.add(requirement.id);
+      }
+    });
+  }
+
+  const flashcards = generatedKit[FLASHCARD_SECTION];
+  if (Array.isArray(flashcards)) {
+    flashcards.forEach((flashcard, index) => {
+      const path = `${FLASHCARD_SECTION}[${index}]`;
+      if (!isPlainObject(flashcard)) {
+        details.push({ path, message: "must be an object" });
+        return;
+      }
+
+      if (typeof flashcard.id !== "string" || flashcard.id.trim() === "") {
+        details.push({ path: `${path}.id`, message: "must be a non-empty string" });
+      } else if (seenFlashcardIds.has(flashcard.id)) {
+        details.push({ path: `${path}.id`, message: `duplicates flashcard id at ${seenFlashcardIds.get(flashcard.id)}` });
+      } else {
+        seenFlashcardIds.set(flashcard.id, `${path}.id`);
+      }
+
+      for (const field of ["front", "back"]) {
+        if (typeof flashcard[field] !== "string" || flashcard[field].trim() === "") {
+          details.push({ path: `${path}.${field}`, message: "must be a non-empty string" });
+        } else {
+          textValues.push({ path: `${path}.${field}`, value: flashcard[field] });
+        }
+      }
+
+      if (!Array.isArray(flashcard.requirement_ids) || flashcard.requirement_ids.length === 0) {
+        details.push({ path: `${path}.requirement_ids`, message: "must be a non-empty array" });
+      } else {
+        flashcard.requirement_ids.forEach((requirementId, requirementIndex) => {
+          const referencePath = `${path}.requirement_ids[${requirementIndex}]`;
+          if (typeof requirementId !== "string" || requirementId.trim() === "") {
+            details.push({ path: referencePath, message: "must be a non-empty string" });
+          } else if (!knownRequirementIds.has(requirementId)) {
+            details.push({ path: referencePath, message: `references unknown requirement '${requirementId}'` });
+          }
+        });
+      }
+
+      if (typeof flashcard.front === "string" && typeof flashcard.back === "string") {
+        const contentKey = `${normalizedQuestionText(flashcard.front)}\u0000${normalizedQuestionText(flashcard.back)}`;
+        if (seenFlashcardContent.has(contentKey)) {
+          details.push({
+            path: `${path}.front`,
+            message: `duplicates flashcard content at ${seenFlashcardContent.get(contentKey)}`,
+          });
+        } else {
+          seenFlashcardContent.set(contentKey, path);
+        }
       }
     });
   }

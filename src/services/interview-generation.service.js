@@ -19,7 +19,12 @@ const GITHUB_SECRET_PATTERNS = [
 ];
 const GENERATION_INSTRUCTIONS = [
   "Generate both technical_questions and non_technical_questions using the existing structured response contract.",
-  "Also provide interviewer_questions, concise interview_tips, and question-grounded follow_up_guidance.",
+  "Also provide interviewer_questions, concise interview_tips, question-grounded follow_up_guidance, and flashcards.",
+  "Generate concise, useful study flashcards from the supplied generation_context.requirements and relevant role/JD evidence; each card must have front, back, and requirement_ids containing only real IDs from that requirements list.",
+  "Flashcard fronts should ask a clear study question or prompt; backs should provide a useful concise explanation. Flashcards should aid interview revision rather than duplicate every generated interview question.",
+  "If generation_context.requirements is empty, return flashcards as an empty array. Never create placeholder or invented requirement IDs.",
+  "Do not put unsupported company or candidate claims in flashcards. Do not invent candidate experience, projects, certifications, GitHub contributions, or technologies; missing GitHub or certifications must not be treated as evidence.",
+  "Use the supplied requirement text, kind, and priority as structured evidence. Do not derive new candidate requirements from generic company research.",
   "Use requested role, user JD, public JD when available, supported company/domain evidence, and explicitly supplied candidate details to make questions relevant.",
   "When candidate context identifies a fresher, focus on supplied projects, internships, academic or technical experience, certifications, skills, motivation, learning, and behavioral situations; when it identifies an experienced candidate, focus on supplied roles, decisions, responsibilities, achievements, projects, and role motivation. Do not assume an experience level that is not supplied.",
   "When candidate projects, skills, certifications, or previous roles are supplied, refer to those details specifically without adding unstated scope, tools, results, or responsibilities. Do not force every non-technical category when context does not support it.",

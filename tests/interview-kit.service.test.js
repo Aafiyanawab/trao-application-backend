@@ -26,6 +26,7 @@ function validGenerationContext() {
       public_jd: null,
       user_jd: "Build reliable APIs.",
     },
+    requirements: [{ id: "r1", text: "Build APIs", kind: "technical", priority: "must" }],
     research: {
       sources: [],
       pages_used: [],
@@ -44,6 +45,12 @@ function generatedKit() {
     interviewer_questions: [],
     interview_tips: [],
     follow_up_guidance: [],
+    flashcards: [{
+      id: "f1",
+      front: "What is an API?",
+      back: "A defined interface between software components.",
+      requirement_ids: ["r1"],
+    }],
   };
 }
 
@@ -56,8 +63,8 @@ function fakePipeline({ generated = generatedKit(), validated = generated } = {}
       events.push("generate");
       return generated;
     },
-    validate: (kit) => {
-      calls.validate.push(kit);
+    validate: (kit, options) => {
+      calls.validate.push({ kit, options });
       events.push("validate");
       return validated;
     },
@@ -77,8 +84,29 @@ test("runs generation before validation and returns the validated kit", async ()
   assert.deepEqual(events, ["generate", "validate"]);
   assert.equal(calls.generate.length, 1);
   assert.equal(calls.validate.length, 1);
-  assert.equal(calls.validate[0], generated);
+  assert.equal(calls.validate[0].kit, generated);
+  assert.deepEqual(calls.validate[0].options.generationContext, generationContext);
   assert.equal(result, validated);
+});
+
+test("passes generated flashcards and their real requirement IDs through validation", async () => {
+  const generated = generatedKit();
+  let receivedKit;
+  let receivedOptions;
+  const service = createInterviewKitService({
+    generate: async () => generated,
+    validate: (kit, options) => {
+      receivedKit = kit;
+      receivedOptions = options;
+      return kit;
+    },
+  });
+  const context = validGenerationContext();
+  const result = await service.generateInterviewKit({ generationContext: context });
+
+  assert.equal(receivedKit.flashcards[0].requirement_ids[0], "r1");
+  assert.deepEqual(receivedOptions.generationContext.requirements, context.requirements);
+  assert.equal(result.flashcards[0].id, "f1");
 });
 
 test("forwards candidate and GitHub contexts unchanged", async () => {

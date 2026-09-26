@@ -67,7 +67,7 @@ function createInterviewKitService({
   async function generateInterviewKit({ generationContext, candidateContext, githubContext } = {}) {
     validateGenerationContext(generationContext);
     const generatedKit = await generate(generationContext, candidateContext, githubContext);
-    return validate(generatedKit);
+    return validate(generatedKit, { generationContext });
   }
 
   return { generateInterviewKit };
