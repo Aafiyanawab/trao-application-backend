@@ -43,6 +43,13 @@ const GENERATION_INSTRUCTIONS = [
   "If candidate_context is null or a candidate detail is absent, do not assume it. Adapt only to candidate facts explicitly supplied.",
   "Do not calculate schedules, allocate preparation days, validate question coverage or kit structure, perform research, or return anything outside the generation response contract.",
 ];
+const SECOND_PASS_INSTRUCTIONS = [
+  "This is the single allowed coverage repair pass. Generate only additional technical/non-technical questions and flashcards for the uncovered MUST requirement IDs in second_pass_context.",
+  "Use only requirement IDs present in generation_context.requirements and listed as uncovered in second_pass_context. Every question and flashcard reference must be real and relevant; never invent IDs or unrelated mappings.",
+  "Use existing_material only to avoid duplicating its questions and flashcards. Preserve first-pass material; do not regenerate it.",
+  "Preserve candidate and GitHub evidence rules. Do not invent candidate experience or unsupported facts.",
+  "Return empty interviewer_questions, interview_tips, and follow_up_guidance arrays in this repair response.",
+];
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -202,12 +209,16 @@ function cloneData(value) {
   return value;
 }
 
-function buildGenerationInput(generationContext, candidateContext, githubContext) {
+function buildGenerationInput(generationContext, candidateContext, githubContext, generationOptions = {}) {
+  const secondPassContext = generationOptions?.secondPass;
   return {
-    generation_instructions: GENERATION_INSTRUCTIONS.slice(),
+    generation_instructions: secondPassContext
+      ? [...GENERATION_INSTRUCTIONS, ...SECOND_PASS_INSTRUCTIONS]
+      : GENERATION_INSTRUCTIONS.slice(),
     generation_context: cloneData(generationContext),
     candidate_context: candidateContext == null ? null : cloneData(candidateContext),
     github_context: githubContext == null ? null : cloneData(githubContext),
+    ...(secondPassContext ? { second_pass_context: cloneData(secondPassContext) } : {}),
   };
 }
 
@@ -216,14 +227,25 @@ function createInterviewGenerationService({ generateContent = generateInterviewC
     throw new TypeError("generateContent must be a function");
   }
 
-  async function generateInterviewKit(generationContext, candidateContext = undefined, githubContext = undefined) {
+  async function generateInterviewKit(
+    generationContext,
+    candidateContext = undefined,
+    githubContext = undefined,
+    generationOptions = undefined,
+  ) {
     const details = [];
     validateResearchContext(generationContext, details);
     validateCandidateContext(candidateContext, details);
     validateGithubContext(githubContext, details);
+    if (generationOptions !== undefined && !isPlainObject(generationOptions)) {
+      details.push({ path: "generationOptions", message: "must be an object" });
+    }
+    if (generationOptions?.secondPass !== undefined && !isPlainObject(generationOptions.secondPass)) {
+      details.push({ path: "generationOptions.secondPass", message: "must be an object" });
+    }
     if (details.length > 0) throw validationError(details);
 
-    const generationInput = buildGenerationInput(generationContext, candidateContext, githubContext);
+    const generationInput = buildGenerationInput(generationContext, candidateContext, githubContext, generationOptions);
     try {
       return await generateContent(generationInput);
     } catch (error) {
