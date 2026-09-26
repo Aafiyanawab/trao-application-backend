@@ -75,15 +75,23 @@ function appError(message, code, statusCode, details) {
   return new AppError(message, code, statusCode, details);
 }
 
+function getGenerationContext(input) {
+  if (isPlainObject(input) && isPlainObject(input.generation_context)) {
+    return input.generation_context;
+  }
+  return input;
+}
+
 function validateGenerationContext(input) {
-  if (!isPlainObject(input) || !isPlainObject(input.company) || !isPlainObject(input.role) || !isPlainObject(input.research)) {
+  const context = getGenerationContext(input);
+  if (!isPlainObject(context) || !isPlainObject(context.company) || !isPlainObject(context.role) || !isPlainObject(context.research)) {
     throw appError("Generation context must contain company, role, and research objects", "VALIDATION_ERROR", 400);
   }
-  if (!Array.isArray(input.requirements)) {
+  if (!Array.isArray(context.requirements)) {
     throw appError("Generation context requirements must be an array", "VALIDATION_ERROR", 400);
   }
   const requirementIds = new Set();
-  for (const [index, requirement] of input.requirements.entries()) {
+  for (const [index, requirement] of context.requirements.entries()) {
     if (
       !isPlainObject(requirement) ||
       typeof requirement.id !== "string" || requirement.id.trim() === "" ||
@@ -219,6 +227,7 @@ function createGeminiService({
 
   async function generateInterviewContent(input) {
     validateGenerationContext(input);
+    const generationContext = getGenerationContext(input);
 
     const model = process.env.GEMINI_MODEL;
     if (typeof model !== "string" || model.trim() === "") {
@@ -282,7 +291,7 @@ function createGeminiService({
         throw appError("Gemini returned malformed structured content", "MALFORMED_GEMINI_RESPONSE", 502);
       }
 
-      return validateGenerationResponse(parsed, input.requirements);
+      return validateGenerationResponse(parsed, generationContext.requirements);
     } catch (error) {
       if (error instanceof AppError) throw error;
       if (controller.signal.aborted) {

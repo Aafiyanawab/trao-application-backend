@@ -6,6 +6,8 @@ const test = require("node:test");
 const {
   createInterviewGenerationService,
 } = require("../src/services/interview-generation.service");
+const { createGeminiService } = require("../src/services/gemini.service");
+const { validateGeneratedInterviewKit } = require("../src/services/generated-kit-validation.service");
 const { AppError } = require("../src/utils/errors");
 
 function generationContext(overrides = {}) {
@@ -86,6 +88,96 @@ test("constructs Gemini input from generation context and candidate context", as
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].generation_context, generationContext());
   assert.deepEqual(calls[0].candidate_context, candidate);
+});
+
+test("connects the real generation and Gemini services with optional candidate and GitHub evidence", async () => {
+  const previousModel = process.env.GEMINI_MODEL;
+  process.env.GEMINI_MODEL = "gemini-offline-test";
+  const requestCalls = [];
+  const gemini = createGeminiService({
+    getApiKey: () => "offline-test-key",
+    request: async (url, options) => {
+      requestCalls.push({ url, options, body: JSON.parse(options.body) });
+      return {
+        ok: true,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(contractResult()) }] } }],
+        }),
+      };
+    },
+  });
+  const generation = createInterviewGenerationService({
+    generateContent: gemini.generateInterviewContent,
+  });
+  const context = generationContext();
+  const candidate = {
+    projects: [{ name: "Transit Planner", details: "Uses graph search to plan routes." }],
+    skills: ["JavaScript"],
+    previous_roles: [{ title: "Intern", responsibilities: ["Built API endpoints"] }],
+  };
+  const github = {
+    repositories: [{ name: "route-engine", languages: ["JavaScript"], readme: "Uses A* search for route planning." }],
+  };
+  const originals = structuredClone({ context, candidate, github });
+
+  try {
+    const kit = await generation.generateInterviewKit(context, candidate, github);
+    assert.equal(requestCalls.length, 1);
+    const request = requestCalls[0].body;
+    const prompt = request.contents[0].parts[0].text;
+    assert.deepEqual(JSON.parse(prompt.slice(prompt.indexOf("\n{") + 1)).generation_context, context);
+    assert.deepEqual(JSON.parse(prompt.slice(prompt.indexOf("\n{") + 1)).candidate_context, candidate);
+    assert.deepEqual(JSON.parse(prompt.slice(prompt.indexOf("\n{") + 1)).github_context, github);
+    assert.match(prompt, /repository\/project evidence/i);
+    assert.match(prompt, /candidate proficiency, authorship/i);
+    assert.match(prompt, /ask specific questions about the project's technologies, architecture, or implementation details/i);
+    assert.equal(request.generationConfig.responseMimeType, "application/json");
+    validateGeneratedInterviewKit(kit, { generationContext: context });
+
+    await generation.generateInterviewKit(context);
+    const optionalPrompt = requestCalls[1].body.contents[0].parts[0].text;
+    const optionalInput = JSON.parse(optionalPrompt.slice(optionalPrompt.indexOf("\n{") + 1));
+    assert.equal(optionalInput.candidate_context, null);
+    assert.equal(optionalInput.github_context, null);
+
+    assert.deepEqual({ context, candidate, github }, originals);
+  } finally {
+    if (previousModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = previousModel;
+  }
+});
+
+test("rejects invalid generation context before the real Gemini network boundary", async () => {
+  let requestCount = 0;
+  const gemini = createGeminiService({
+    getApiKey: () => "offline-test-key",
+    request: async () => { requestCount += 1; return { ok: false }; },
+  });
+  const generation = createInterviewGenerationService({ generateContent: gemini.generateInterviewContent });
+
+  await assert.rejects(
+    generation.generateInterviewKit({ company: {}, role: {}, research: {} }),
+    (error) => error instanceof AppError && error.code === "VALIDATION_ERROR",
+  );
+  assert.equal(requestCount, 0);
+});
+
+test("preserves Gemini AppErrors across the real service boundary", async () => {
+  const previousModel = process.env.GEMINI_MODEL;
+  process.env.GEMINI_MODEL = "gemini-offline-test";
+  const geminiError = new AppError("Gemini request timed out", "GEMINI_TIMEOUT", 504);
+  const gemini = createGeminiService({
+    getApiKey: () => "offline-test-key",
+    request: async () => { throw geminiError; },
+  });
+  const generation = createInterviewGenerationService({ generateContent: gemini.generateInterviewContent });
+
+  try {
+    await assert.rejects(generation.generateInterviewKit(generationContext()), (error) => error === geminiError);
+  } finally {
+    if (previousModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = previousModel;
+  }
 });
 
 test("includes the user JD as authoritative role context", async () => {
