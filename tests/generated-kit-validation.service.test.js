@@ -13,6 +13,7 @@ function validKit() {
         category: "technical",
         difficulty: 2,
         rationale: "The role JD mentions API development.",
+        requirement_ids: ["r1"],
       },
     ],
     non_technical_questions: [
@@ -22,6 +23,7 @@ function validKit() {
         category: "behavioral",
         difficulty: 1,
         rationale: "This explores collaboration.",
+        requirement_ids: ["r1"],
       },
     ],
     interviewer_questions: ["How does the team measure success in this role?"],
@@ -201,6 +203,8 @@ test("rejects duplicate flashcard content after normalization", () => {
 
 test("does not require flashcards when there are no requirements", () => {
   const kit = validKit();
+  kit.technical_questions = [];
+  kit.non_technical_questions = [];
   kit.flashcards = [];
 
   assert.equal(validateGeneratedInterviewKit(kit, { generationContext: { requirements: [] } }), kit);
@@ -219,6 +223,70 @@ test("accepts a valid question using the Gemini contract", () => {
   kit.non_technical_questions = [];
 
   assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
+});
+
+test("accepts question traceability to one or multiple existing requirements", () => {
+  const kit = validKit();
+  kit.technical_questions[0].requirement_ids = ["r1", "r2"];
+  const options = {
+    generationContext: {
+      requirements: [
+        ...requirementOptions.generationContext.requirements,
+        { id: "r2", text: "Resilient APIs", kind: "technical", priority: "nice" },
+      ],
+    },
+  };
+
+  assert.equal(validateGeneratedInterviewKit(kit, options), kit);
+});
+
+test("rejects missing, non-array, and empty question requirement_ids", () => {
+  const missing = validKit();
+  delete missing.technical_questions[0].requirement_ids;
+  assertInvalid(missing, "technical_questions[0].requirement_ids");
+
+  const nonArray = validKit();
+  nonArray.technical_questions[0].requirement_ids = "r1";
+  assertInvalid(nonArray, "technical_questions[0].requirement_ids");
+
+  const empty = validKit();
+  empty.technical_questions[0].requirement_ids = [];
+  assertInvalid(empty, "technical_questions[0].requirement_ids");
+});
+
+test("rejects unknown, malformed, and repeated IDs within one question", () => {
+  for (const requirementIds of [["r999"], [" "], [5]]) {
+    const kit = validKit();
+    kit.technical_questions[0].requirement_ids = requirementIds;
+    assertInvalid(kit, "technical_questions[0].requirement_ids[0]");
+  }
+  const duplicate = validKit();
+  duplicate.technical_questions[0].requirement_ids = ["r1", "r1"];
+  assertInvalid(duplicate, "technical_questions[0].requirement_ids[1]");
+});
+
+test("allows the same requirement ID on multiple different questions", () => {
+  const kit = validKit();
+  kit.technical_questions[0].requirement_ids = ["r1"];
+  kit.non_technical_questions[0].requirement_ids = ["r1"];
+
+  assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
+});
+
+test("rejects technical and non-technical questions with unknown requirement references", () => {
+  const kit = validKit();
+  kit.non_technical_questions[0].requirement_ids = ["r999"];
+
+  assertInvalid(kit, "non_technical_questions[0].requirement_ids[0]");
+});
+
+test("accepts no questions when there are no requirements", () => {
+  const kit = validKit();
+  kit.technical_questions = [];
+  kit.non_technical_questions = [];
+  kit.flashcards = [];
+
+  assert.equal(validateGeneratedInterviewKit(kit, { generationContext: { requirements: [] } }), kit);
 });
 
 test("rejects malformed question objects", () => {
@@ -356,6 +424,7 @@ test("accepts user-provided JD fallback and thin research options", () => {
   const kit = validKit();
   const options = {
     generationContext: {
+      requirements: requirementOptions.generationContext.requirements,
       role: { matching_role_found: false, job_source: "user_provided" },
       research: { research_gaps: ["limited_company_information"], warnings: [] },
     },

@@ -19,6 +19,8 @@ const GITHUB_SECRET_PATTERNS = [
 ];
 const GENERATION_INSTRUCTIONS = [
   "Generate both technical_questions and non_technical_questions using the existing structured response contract.",
+  "Every technical and non-technical question must include one or more requirement_ids from generation_context.requirements. Each referenced requirement must genuinely support that question; never invent IDs or assign unrelated requirements just to fill the field.",
+  "When generation_context.requirements is empty, return empty technical_questions, non_technical_questions, and flashcards arrays rather than inventing requirement IDs.",
   "Also provide interviewer_questions, concise interview_tips, question-grounded follow_up_guidance, and flashcards.",
   "Generate concise, useful study flashcards from the supplied generation_context.requirements and relevant role/JD evidence; each card must have front, back, and requirement_ids containing only real IDs from that requirements list.",
   "Flashcard fronts should ask a clear study question or prompt; backs should provide a useful concise explanation. Flashcards should aid interview revision rather than duplicate every generated interview question.",

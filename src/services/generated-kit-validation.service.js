@@ -17,16 +17,11 @@ function isPlainObject(value) {
 }
 
 function invalidKit(details) {
-  return new AppError(
-    "Generated interview kit is invalid",
-    "INVALID_GENERATED_KIT",
-    422,
-    details,
-  );
+  return new AppError("Generated interview kit is invalid", "INVALID_GENERATED_KIT", 422, details);
 }
 
-function normalizedQuestionText(question) {
-  return question.trim().toLowerCase().replace(/\s+/g, " ");
+function normalizedText(value) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function validateGeneratedInterviewKit(generatedKit, options = {}) {
@@ -44,8 +39,25 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
     }
   }
 
-  const seenIds = new Map();
-  const seenQuestions = new Map();
+  const requirements = options?.generationContext?.requirements;
+  const knownRequirementIds = new Set();
+  if (requirements !== undefined && !Array.isArray(requirements)) {
+    details.push({ path: "generationContext.requirements", message: "must be an array" });
+  } else if (Array.isArray(requirements)) {
+    requirements.forEach((requirement, index) => {
+      const path = `generationContext.requirements[${index}]`;
+      if (!isPlainObject(requirement) || typeof requirement.id !== "string" || requirement.id.trim() === "") {
+        details.push({ path: `${path}.id`, message: "must be a non-empty string" });
+      } else if (knownRequirementIds.has(requirement.id)) {
+        details.push({ path: `${path}.id`, message: "must be unique" });
+      } else {
+        knownRequirementIds.add(requirement.id);
+      }
+    });
+  }
+
+  const seenQuestionIds = new Map();
+  const seenQuestionText = new Map();
   const seenFlashcardIds = new Map();
   const seenFlashcardContent = new Map();
   const textValues = [];
@@ -63,26 +75,20 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
 
       if (typeof question.id !== "string" || question.id.trim() === "") {
         details.push({ path: `${path}.id`, message: "must be a non-empty string" });
-      } else if (seenIds.has(question.id)) {
-        details.push({
-          path: `${path}.id`,
-          message: `duplicates question id at ${seenIds.get(question.id)}`,
-        });
+      } else if (seenQuestionIds.has(question.id)) {
+        details.push({ path: `${path}.id`, message: `duplicates question id at ${seenQuestionIds.get(question.id)}` });
       } else {
-        seenIds.set(question.id, `${path}.id`);
+        seenQuestionIds.set(question.id, `${path}.id`);
       }
 
       if (typeof question.question !== "string" || question.question.trim() === "") {
         details.push({ path: `${path}.question`, message: "must be a non-empty string" });
       } else {
-        const normalized = normalizedQuestionText(question.question);
-        if (seenQuestions.has(normalized)) {
-          details.push({
-            path: `${path}.question`,
-            message: `duplicates question text at ${seenQuestions.get(normalized)}`,
-          });
+        const normalized = normalizedText(question.question);
+        if (seenQuestionText.has(normalized)) {
+          details.push({ path: `${path}.question`, message: `duplicates question text at ${seenQuestionText.get(normalized)}` });
         } else {
-          seenQuestions.set(normalized, `${path}.question`);
+          seenQuestionText.set(normalized, `${path}.question`);
         }
         textValues.push({ path: `${path}.question`, value: question.question });
       }
@@ -92,15 +98,31 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       } else if (!QUESTION_CATEGORIES.includes(question.category)) {
         details.push({ path: `${path}.category`, message: "is not supported by the Gemini generation contract" });
       }
-
       if (!Number.isInteger(question.difficulty) || question.difficulty < 1 || question.difficulty > 3) {
         details.push({ path: `${path}.difficulty`, message: "must be an integer between 1 and 3" });
       }
-
       if (typeof question.rationale !== "string" || question.rationale.trim() === "") {
         details.push({ path: `${path}.rationale`, message: "must be a non-empty string" });
       } else {
         textValues.push({ path: `${path}.rationale`, value: question.rationale });
+      }
+
+      if (!Array.isArray(question.requirement_ids) || question.requirement_ids.length === 0) {
+        details.push({ path: `${path}.requirement_ids`, message: "must be a non-empty array" });
+      } else {
+        const seenQuestionRequirementIds = new Set();
+        question.requirement_ids.forEach((requirementId, requirementIndex) => {
+          const referencePath = `${path}.requirement_ids[${requirementIndex}]`;
+          if (typeof requirementId !== "string" || requirementId.trim() === "") {
+            details.push({ path: referencePath, message: "must be a non-empty string" });
+          } else if (seenQuestionRequirementIds.has(requirementId)) {
+            details.push({ path: referencePath, message: "duplicates a requirement ID within this question" });
+          } else if (!knownRequirementIds.has(requirementId)) {
+            details.push({ path: referencePath, message: `references unknown requirement '${requirementId}'` });
+          } else {
+            seenQuestionRequirementIds.add(requirementId);
+          }
+        });
       }
     });
   }
@@ -114,23 +136,6 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
         details.push({ path, message: "must be a non-empty string" });
       } else {
         textValues.push({ path, value: item });
-      }
-    });
-  }
-
-  const requirements = options?.generationContext?.requirements;
-  const knownRequirementIds = new Set();
-  if (requirements !== undefined && !Array.isArray(requirements)) {
-    details.push({ path: "generationContext.requirements", message: "must be an array" });
-  } else if (Array.isArray(requirements)) {
-    requirements.forEach((requirement, index) => {
-      const path = `generationContext.requirements[${index}].id`;
-      if (!isPlainObject(requirement) || typeof requirement.id !== "string" || requirement.id.trim() === "") {
-        details.push({ path, message: "must be a non-empty string" });
-      } else if (knownRequirementIds.has(requirement.id)) {
-        details.push({ path, message: "must be unique" });
-      } else {
-        knownRequirementIds.add(requirement.id);
       }
     });
   }
@@ -174,14 +179,11 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       }
 
       if (typeof flashcard.front === "string" && typeof flashcard.back === "string") {
-        const contentKey = `${normalizedQuestionText(flashcard.front)}\u0000${normalizedQuestionText(flashcard.back)}`;
-        if (seenFlashcardContent.has(contentKey)) {
-          details.push({
-            path: `${path}.front`,
-            message: `duplicates flashcard content at ${seenFlashcardContent.get(contentKey)}`,
-          });
+        const key = `${normalizedText(flashcard.front)}\u0000${normalizedText(flashcard.back)}`;
+        if (seenFlashcardContent.has(key)) {
+          details.push({ path: `${path}.front`, message: `duplicates flashcard content at ${seenFlashcardContent.get(key)}` });
         } else {
-          seenFlashcardContent.set(contentKey, path);
+          seenFlashcardContent.set(key, path);
         }
       }
     });
@@ -193,10 +195,7 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
     }
   }
 
-  if (details.length > 0) {
-    throw invalidKit(details);
-  }
-
+  if (details.length > 0) throw invalidKit(details);
   return generatedKit;
 }
 

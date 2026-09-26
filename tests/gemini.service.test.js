@@ -45,6 +45,7 @@ function generatedContent() {
         category: "technical",
         difficulty: 2,
         rationale: "Tests protect service behavior.",
+        requirement_ids: ["r1"],
       },
     ],
     non_technical_questions: [
@@ -54,6 +55,7 @@ function generatedContent() {
         category: "behavioral",
         difficulty: 1,
         rationale: "Assesses communication experience.",
+        requirement_ids: ["r1"],
       },
     ],
     interviewer_questions: ["What does success look like in this role?"],
@@ -145,6 +147,8 @@ test("uses only the explicitly configured model and Gemini structured-output con
     const body = JSON.parse(requestCalls[0].requestOptions.body);
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(body.generationConfig.responseSchema, GENERATION_RESPONSE_SCHEMA);
+    assert.ok(GENERATION_RESPONSE_SCHEMA.properties.technical_questions.items.required.includes("requirement_ids"));
+    assert.equal(GENERATION_RESPONSE_SCHEMA.properties.technical_questions.items.properties.requirement_ids.type, "ARRAY");
     assert.deepEqual(GENERATION_RESPONSE_SCHEMA.properties.flashcards.items.required, [
       "id", "front", "back", "requirement_ids",
     ]);
@@ -248,6 +252,55 @@ test("rejects parsed output that violates the generation contract", async () => 
       return true;
     },
   );
+});
+
+test("accepts a question referencing multiple supplied requirement IDs", async () => {
+  const context = generationContext();
+  context.requirements.push({ id: "r2", text: "Write tests", kind: "technical", priority: "nice" });
+  const content = generatedContent();
+  content.technical_questions[0].requirement_ids = ["r1", "r2"];
+  const service = createGeminiService({
+    getApiKey: () => "test-secret-key",
+    request: async () => successfulResponse(content),
+  });
+
+  const result = await service.generateInterviewContent(context);
+
+  assert.deepEqual(result.technical_questions[0].requirement_ids, ["r1", "r2"]);
+});
+
+test("rejects questions that reference unknown requirement IDs", async () => {
+  const content = generatedContent();
+  content.non_technical_questions[0].requirement_ids = ["r999"];
+  const service = createGeminiService({
+    getApiKey: () => "test-secret-key",
+    request: async () => successfulResponse(content),
+  });
+
+  await assert.rejects(
+    service.generateInterviewContent(generationContext()),
+    (error) => error.code === "GENERATION_SCHEMA_ERROR" &&
+      error.details.some((detail) => detail.path === "non_technical_questions[0].requirement_ids[0]"),
+  );
+});
+
+test("accepts empty question and flashcard arrays when there are no requirements", async () => {
+  const content = generatedContent();
+  content.technical_questions = [];
+  content.non_technical_questions = [];
+  content.flashcards = [];
+  const context = generationContext();
+  context.requirements = [];
+  const service = createGeminiService({
+    getApiKey: () => "test-secret-key",
+    request: async () => successfulResponse(content),
+  });
+
+  const result = await service.generateInterviewContent(context);
+
+  assert.deepEqual(result.technical_questions, []);
+  assert.deepEqual(result.non_technical_questions, []);
+  assert.deepEqual(result.flashcards, []);
 });
 
 test("sanitizes provider failures and does not expose the API key", async () => {

@@ -21,9 +21,10 @@ const questionSchema = {
     category: { type: "STRING", enum: QUESTION_CATEGORIES },
     difficulty: { type: "INTEGER", minimum: 1, maximum: 3 },
     rationale: { type: "STRING" },
+    requirement_ids: { type: "ARRAY", items: { type: "STRING" }, minItems: 1 },
   },
-  required: ["id", "question", "category", "difficulty", "rationale"],
-  propertyOrdering: ["id", "question", "category", "difficulty", "rationale"],
+  required: ["id", "question", "category", "difficulty", "rationale", "requirement_ids"],
+  propertyOrdering: ["id", "question", "category", "difficulty", "rationale", "requirement_ids"],
 };
 
 const flashcardSchema = {
@@ -81,10 +82,27 @@ function validateGenerationContext(input) {
   if (!Array.isArray(input.requirements)) {
     throw appError("Generation context requirements must be an array", "VALIDATION_ERROR", 400);
   }
+  const requirementIds = new Set();
+  for (const [index, requirement] of input.requirements.entries()) {
+    if (
+      !isPlainObject(requirement) ||
+      typeof requirement.id !== "string" || requirement.id.trim() === "" ||
+      typeof requirement.text !== "string" || requirement.text.trim() === "" ||
+      !["technical", "behavioural", "domain"].includes(requirement.kind) ||
+      !["must", "nice"].includes(requirement.priority) ||
+      requirementIds.has(requirement.id)
+    ) {
+      throw appError("Generation context requirements are invalid", "VALIDATION_ERROR", 400, [
+        { path: `requirements[${index}]`, message: "must match the stable requirement contract" },
+      ]);
+    }
+    requirementIds.add(requirement.id);
+  }
 }
 
-function validateGenerationResponse(value) {
+function validateGenerationResponse(value, requirements = []) {
   const details = [];
+  const knownRequirementIds = new Set(requirements.map((requirement) => requirement.id));
   if (!isPlainObject(value)) {
     throw appError("Gemini response does not match the generation contract", "GENERATION_SCHEMA_ERROR", 502);
   }
@@ -112,6 +130,26 @@ function validateGenerationResponse(value) {
       }
       if (!Number.isInteger(question.difficulty) || question.difficulty < 1 || question.difficulty > 3) {
         details.push({ path: `${path}.difficulty`, message: "must be an integer between 1 and 3" });
+      }
+      if (!Array.isArray(question.requirement_ids) || question.requirement_ids.length === 0) {
+        details.push({ path: `${path}.requirement_ids`, message: "must be a non-empty array" });
+      } else {
+        const seenRequirementIds = new Set();
+        question.requirement_ids.forEach((requirementId, requirementIndex) => {
+          const requirementPath = `${path}.requirement_ids[${requirementIndex}]`;
+          if (typeof requirementId !== "string" || requirementId.trim() === "") {
+            details.push({
+              path: requirementPath,
+              message: "must be a non-empty string",
+            });
+          } else if (seenRequirementIds.has(requirementId)) {
+            details.push({ path: requirementPath, message: "must not repeat within a question" });
+          } else if (!knownRequirementIds.has(requirementId)) {
+            details.push({ path: requirementPath, message: "references an unknown requirement ID" });
+          } else {
+            seenRequirementIds.add(requirementId);
+          }
+        });
       }
     });
   }
@@ -244,7 +282,7 @@ function createGeminiService({
         throw appError("Gemini returned malformed structured content", "MALFORMED_GEMINI_RESPONSE", 502);
       }
 
-      return validateGenerationResponse(parsed);
+      return validateGenerationResponse(parsed, input.requirements);
     } catch (error) {
       if (error instanceof AppError) throw error;
       if (controller.signal.aborted) {
