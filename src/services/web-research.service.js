@@ -67,6 +67,40 @@ function extractReadableText(content, contentType) {
   ).trim();
 }
 
+function extractPageMetadata(content, contentType) {
+  if (contentType === "text/plain") {
+    return { title: "", headings: [], links: [] };
+  }
+
+  const html = content.toString("utf8");
+  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  const headings = [];
+  const headingPattern = /<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>/gi;
+  let headingMatch;
+  while ((headingMatch = headingPattern.exec(html)) !== null) {
+    const heading = extractReadableText(Buffer.from(headingMatch[1]), contentType);
+    if (heading) headings.push(heading);
+  }
+
+  const links = [];
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+  let anchorMatch;
+  while ((anchorMatch = anchorPattern.exec(html)) !== null) {
+    const hrefMatch = anchorMatch[1].match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+    const href = hrefMatch && decodeHtmlEntities(hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3]).trim();
+    const text = extractReadableText(Buffer.from(anchorMatch[2]), contentType);
+    if (href) links.push({ href, text });
+  }
+
+  return {
+    title: titleMatch
+      ? extractReadableText(Buffer.from(titleMatch[1]), contentType)
+      : "",
+    headings,
+    links,
+  };
+}
+
 function createPinnedLookup(address) {
   return (hostname, options, callback) => {
     const result = { address: address.address, family: address.family };
@@ -223,6 +257,7 @@ function createWebResearchService({
         status,
         content_type: mediaType,
         text: extractReadableText(body, mediaType),
+        ...extractPageMetadata(body, mediaType),
       };
     }
   }
