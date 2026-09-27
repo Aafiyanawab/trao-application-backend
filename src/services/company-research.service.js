@@ -96,10 +96,14 @@ function validateInput(input) {
   }
 
   const details = [];
-  for (const field of ["company_name", "company_url", "role"]) {
+  for (const field of ["company_url", "role"]) {
     if (typeof input[field] !== "string" || input[field].trim() === "") {
       details.push({ path: field, message: "must be a non-empty string" });
     }
+  }
+  if (input.company_name !== undefined && input.company_name !== null
+    && (typeof input.company_name !== "string" || input.company_name.trim() === "")) {
+    details.push({ path: "company_name", message: "must be a non-empty string when provided" });
   }
   if (typeof input.user_jd !== "string") {
     details.push({ path: "user_jd", message: "must be a string" });
@@ -118,7 +122,7 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
   async function researchCompany(input) {
     validateInput(input);
 
-    const companyName = input.company_name.trim();
+    let companyName = input.company_name?.trim() || null;
     const companyUrl = input.company_url.trim();
     const requestedRole = input.role.trim();
     const userJd = input.user_jd;
@@ -166,6 +170,12 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
         text: fetched.text || "",
         headings: Array.isArray(fetched.headings) ? fetched.headings.slice() : [],
       };
+      if (!companyName && candidate.type === "company" && typeof fetched.site_name === "string" && fetched.site_name.trim()) {
+        companyName = fetched.site_name.trim();
+      }
+      if (!companyName && candidate.type === "company") {
+        throw new AppError("Company name is unavailable from explicit homepage metadata", "COMPANY_NAME_UNAVAILABLE", 422);
+      }
       pages.push(page);
 
       const links = Array.isArray(fetched.links) ? fetched.links : [];

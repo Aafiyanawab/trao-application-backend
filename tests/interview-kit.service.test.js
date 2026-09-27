@@ -39,7 +39,7 @@ function validGenerationContext() {
 function generatedKit() {
   return {
     technical_questions: [
-      { id: "q1", question: "How would you design this API?", category: "technical", difficulty: 2, rationale: "The JD mentions APIs.", requirement_ids: ["r1"] },
+      { id: "q1", question: "How would you design this API?", answer_outline: "Discuss endpoints, validation, and error handling.", category: "technical", difficulty: 2, rationale: "The JD mentions APIs.", requirement_ids: ["r1"] },
     ],
     non_technical_questions: [],
     interviewer_questions: [],

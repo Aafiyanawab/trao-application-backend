@@ -20,6 +20,9 @@ const GITHUB_SECRET_PATTERNS = [
 const GENERATION_INSTRUCTIONS = [
   "generation_context contains role, company, research, and requirements; candidate_context contains optional candidate-provided evidence; github_context contains optional supplied repository/project evidence.",
   "Generate both technical_questions and non_technical_questions using the existing structured response contract.",
+  "For every question, answer_outline must give concise points describing what a strong candidate answer should cover. rationale must remain the reason this question was selected; never use rationale as the answer outline.",
+  "Use only these question categories: technical, behavioural, system-design, company-fit. Choose by what the question evaluates: technical knowledge or implementation is technical; collaboration, leadership, conflict, or personal working behavior is behavioural; architecture, scalability, or system-level trade-offs are system-design; employer, team, role alignment, or motivation about the company is company-fit.",
+  "Classify introduction, motivation, experience, project, certification, and skills questions by their actual question and linked requirement, not by those broad labels: use technical for technical knowledge, behavioural for personal behavior, system-design for architecture, and company-fit for company or role alignment. Do not force a category when evidence does not support it.",
   "Every technical and non-technical question must include one or more requirement_ids from generation_context.requirements. Each referenced requirement must genuinely support that question; never invent IDs or assign unrelated requirements just to fill the field.",
   "When generation_context.requirements is empty, return empty technical_questions, non_technical_questions, and flashcards arrays rather than inventing requirement IDs.",
   "Also provide interviewer_questions, concise interview_tips, question-grounded follow_up_guidance, and flashcards.",
@@ -104,6 +107,13 @@ function validateResearchContext(context, details) {
     }
     if (typeof context.role.user_jd !== "string") {
       details.push({ path: "generationContext.role.user_jd", message: "must be a string" });
+    }
+    if (context.role.seniority !== undefined && context.role.seniority !== null && typeof context.role.seniority !== "string") {
+      details.push({ path: "generationContext.role.seniority", message: "must be a string or null" });
+    }
+    if (context.role.responsibilities !== undefined && (!Array.isArray(context.role.responsibilities)
+      || context.role.responsibilities.some((item) => typeof item !== "string" || item.trim() === ""))) {
+      details.push({ path: "generationContext.role.responsibilities", message: "must be an array of non-empty strings" });
     }
     if (context.role.matching_role_found === false && context.role.job_source !== "user_provided") {
       details.push({ path: "generationContext.role.job_source", message: "must be user_provided when no public role was found" });

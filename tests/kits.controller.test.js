@@ -112,10 +112,10 @@ function builderRequest(userId, body = {}, extras = {}) {
 function generatedSection(section) {
   return {
     technical_questions: section === "technical_questions"
-      ? [{ id: "q-new", question: "New generated question?", category: "technical", difficulty: 2, rationale: "Generated rationale.", requirement_ids: ["r1"] }]
+      ? [{ id: "q-new", question: "New generated question?", answer_outline: "Explain the main implementation choices.", category: "technical", difficulty: 2, rationale: "Generated rationale.", requirement_ids: ["r1"] }]
       : [],
     non_technical_questions: section === "non_technical_questions"
-      ? [{ id: "n-new", question: "New generated behavioral question?", category: "behavioral", difficulty: 1, rationale: "Generated rationale.", requirement_ids: ["r1"] }]
+      ? [{ id: "n-new", question: "New generated behavioral question?", answer_outline: "Describe the situation, action, and outcome.", category: "behavioural", difficulty: 1, rationale: "Generated rationale.", requirement_ids: ["r1"] }]
       : [],
     interviewer_questions: [],
     interview_tips: [],
@@ -375,11 +375,11 @@ test("regeneration retains duplicate content without overwriting preserved items
       ...generatedSection("technical_questions"),
       technical_questions: [
         {
-          id: "q-duplicate", question: builderKit().technical_questions[1].question, category: "technical",
+          id: "q-duplicate", question: builderKit().technical_questions[1].question, answer_outline: "Explain the topic.", category: "technical",
           difficulty: 2, rationale: "Duplicate generated content.", requirement_ids: ["r1"],
         },
         {
-          id: "q2", question: "A new distinct generated question?", category: "technical",
+          id: "q2", question: "A new distinct generated question?", answer_outline: "Explain a supported approach.", category: "technical",
           difficulty: 2, rationale: "A preserved item uses this ID.", requirement_ids: ["r1"],
         },
       ],

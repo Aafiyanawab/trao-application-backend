@@ -131,6 +131,59 @@ function extractRequirements(input) {
   };
 }
 
+const SENIORITY_PATTERN = /\b(entry[- ]level|junior|mid[- ]level|senior|staff|principal|lead)\b/i;
+const RESPONSIBILITY_HEADING = /^\s*(?:key\s+)?(?:responsibilities|what you(?:'|’)ll do|what you will do|duties)\s*:?\s*$/i;
+const SECTION_HEADING = /^\s*(?:requirements?|qualifications?|what we(?:'|’)re looking for|what you(?:'|’)ll need|preferred|nice to have|about us|benefits|skills?)\s*:?\s*$/i;
+
+function extractRoleDetails({ roleTitle, userJd = "", publicJd = "" } = {}) {
+  const seniorityMatch = typeof roleTitle === "string" ? roleTitle.match(SENIORITY_PATTERN) : null;
+  const responsibilities = [];
+  const seen = new Set();
+  let inResponsibilities = false;
+
+  for (const jd of [userJd, publicJd]) {
+    inResponsibilities = false;
+    for (const line of jd.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (RESPONSIBILITY_HEADING.test(trimmed)) {
+        inResponsibilities = true;
+        continue;
+      }
+      if (SECTION_HEADING.test(trimmed)) {
+        inResponsibilities = false;
+        continue;
+      }
+      if (!inResponsibilities) continue;
+
+      const text = trimmed.replace(/^(?:[-*+•▪‣]|\d+[.)])\s*/, "").trim();
+      if (!text) continue;
+      const key = normalizeForComparison(text);
+      if (!seen.has(key)) {
+        seen.add(key);
+        responsibilities.push(text);
+      }
+    }
+  }
+
+  return {
+    seniority: seniorityMatch?.[1] ?? null,
+    responsibilities,
+  };
+}
+
+function extractRequestedRole(userJd) {
+  if (typeof userJd !== "string") return null;
+  const pattern = /^\s*(?:job\s+title|position|role)\s*:\s*(.+?)\s*$/i;
+  for (const line of userJd.split(/\r?\n/)) {
+    const match = line.match(pattern);
+    if (match && match[1].trim()) return match[1].trim().replace(/\s+/g, " ");
+  }
+  return null;
+}
+
 module.exports = {
   extractRequirements,
+  extractRoleDetails,
+  extractRequestedRole,
 };

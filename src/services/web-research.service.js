@@ -69,11 +69,25 @@ function extractReadableText(content, contentType) {
 
 function extractPageMetadata(content, contentType) {
   if (contentType === "text/plain") {
-    return { title: "", headings: [], links: [] };
+    return { title: "", site_name: "", headings: [], links: [] };
   }
 
   const html = content.toString("utf8");
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  let siteName = "";
+  const metaPattern = /<meta\b([^>]*)>/gi;
+  let metaMatch;
+  while ((metaMatch = metaPattern.exec(html)) !== null && !siteName) {
+    const attributes = {};
+    const attributePattern = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+    let attributeMatch;
+    while ((attributeMatch = attributePattern.exec(metaMatch[1])) !== null) {
+      attributes[attributeMatch[1].toLowerCase()] = decodeHtmlEntities(attributeMatch[2] ?? attributeMatch[3] ?? attributeMatch[4]);
+    }
+    if (attributes.property?.toLowerCase() === "og:site_name" || attributes.name?.toLowerCase() === "application-name") {
+      siteName = (attributes.content || "").trim();
+    }
+  }
   const headings = [];
   const headingPattern = /<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>/gi;
   let headingMatch;
@@ -96,6 +110,7 @@ function extractPageMetadata(content, contentType) {
     title: titleMatch
       ? extractReadableText(Buffer.from(titleMatch[1]), contentType)
       : "",
+    site_name: siteName,
     headings,
     links,
   };

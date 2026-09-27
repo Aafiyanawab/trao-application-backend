@@ -3,14 +3,9 @@ const { AppError } = require("../utils/errors");
 const DEFAULT_TIMEOUT_MS = 30000;
 const QUESTION_CATEGORIES = [
   "technical",
-  "behavioral",
-  "company_fit",
-  "introduction",
-  "motivation",
-  "experience",
-  "project",
-  "certification",
-  "skills",
+  "behavioural",
+  "system-design",
+  "company-fit",
 ];
 
 const questionSchema = {
@@ -18,13 +13,14 @@ const questionSchema = {
   properties: {
     id: { type: "STRING" },
     question: { type: "STRING" },
+    answer_outline: { type: "STRING" },
     category: { type: "STRING", enum: QUESTION_CATEGORIES },
     difficulty: { type: "INTEGER", minimum: 1, maximum: 3 },
     rationale: { type: "STRING" },
     requirement_ids: { type: "ARRAY", items: { type: "STRING" }, minItems: 1 },
   },
-  required: ["id", "question", "category", "difficulty", "rationale", "requirement_ids"],
-  propertyOrdering: ["id", "question", "category", "difficulty", "rationale", "requirement_ids"],
+  required: ["id", "question", "answer_outline", "category", "difficulty", "rationale", "requirement_ids"],
+  propertyOrdering: ["id", "question", "answer_outline", "category", "difficulty", "rationale", "requirement_ids"],
 };
 
 const flashcardSchema = {
@@ -102,6 +98,13 @@ function validateGenerationContext(input) {
   if (!Array.isArray(context.requirements)) {
     throw appError("Generation context requirements must be an array", "VALIDATION_ERROR", 400);
   }
+  if (context.role.seniority !== undefined && context.role.seniority !== null && typeof context.role.seniority !== "string") {
+    throw appError("Generation context role seniority is invalid", "VALIDATION_ERROR", 400);
+  }
+  if (context.role.responsibilities !== undefined && (!Array.isArray(context.role.responsibilities)
+    || context.role.responsibilities.some((item) => typeof item !== "string" || item.trim() === ""))) {
+    throw appError("Generation context role responsibilities are invalid", "VALIDATION_ERROR", 400);
+  }
   const requirementIds = new Set();
   for (const [index, requirement] of context.requirements.entries()) {
     if (
@@ -140,7 +143,7 @@ function validateGenerationResponse(value, requirements = []) {
         details.push({ path, message: "must be an object" });
         return;
       }
-      for (const property of ["id", "question", "category", "rationale"]) {
+      for (const property of ["id", "question", "answer_outline", "category", "rationale"]) {
         if (typeof question[property] !== "string" || question[property].trim() === "") {
           details.push({ path: `${path}.${property}`, message: "must be a non-empty string" });
         }

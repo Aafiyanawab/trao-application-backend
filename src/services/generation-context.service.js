@@ -1,5 +1,5 @@
 const { AppError } = require("../utils/errors");
-const { extractRequirements } = require("./requirement-extraction.service");
+const { extractRequirements, extractRoleDetails } = require("./requirement-extraction.service");
 
 const COMPANY_TEXT_FIELDS = [
   "summary",
@@ -8,7 +8,7 @@ const COMPANY_TEXT_FIELDS = [
   "industry_domain",
   "careers_information",
 ];
-const ROLE_NULLABLE_FIELDS = ["job_url", "job_title", "public_jd"];
+const ROLE_NULLABLE_FIELDS = ["job_url", "job_title", "public_jd", "seniority"];
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -69,6 +69,10 @@ function validateResearchContext(context) {
         details.push({ path: `role.${field}`, message: "must be a string or null" });
       }
     }
+    if (context.role.responsibilities !== undefined && (!Array.isArray(context.role.responsibilities)
+      || context.role.responsibilities.some((item) => typeof item !== "string" || item.trim() === ""))) {
+      details.push({ path: "role.responsibilities", message: "must be an array of non-empty strings when provided" });
+    }
     if (context.role.matching_role_found === true && context.role.job_source !== "company_public_page") {
       details.push({ path: "role.job_source", message: "must be company_public_page when a public role was found" });
     }
@@ -126,6 +130,11 @@ function buildGenerationContext(researchContext) {
   const requirements = researchContext.role.user_jd.trim()
     ? extractRequirements({ role: researchContext.role.requested_role, userJd: researchContext.role.user_jd }).requirements
     : [];
+  const roleDetails = extractRoleDetails({
+    roleTitle: researchContext.role.requested_role || researchContext.role.job_title,
+    userJd: researchContext.role.user_jd,
+    publicJd: researchContext.role.matching_role_found ? researchContext.role.public_jd ?? "" : "",
+  });
 
   const company = {
     name: researchContext.company.name,
@@ -146,6 +155,12 @@ function buildGenerationContext(researchContext) {
     job_title: matchingRoleFound ? researchContext.role.job_title ?? null : null,
     public_jd: matchingRoleFound ? researchContext.role.public_jd ?? null : null,
     user_jd: researchContext.role.user_jd,
+    seniority: researchContext.role.seniority !== undefined
+      ? researchContext.role.seniority
+      : roleDetails.seniority,
+    responsibilities: researchContext.role.responsibilities === undefined
+      ? roleDetails.responsibilities
+      : cloneData(researchContext.role.responsibilities),
   };
 
   return {

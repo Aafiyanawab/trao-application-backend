@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "evaluate": "node src/cli/evaluate.js",
     "test": "node --test tests/kit-structure-validator.test.js"
   },
   "repository": {

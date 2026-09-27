@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { extractRequirements } = require("../src/services/requirement-extraction.service");
+const { extractRequirements, extractRequestedRole } = require("../src/services/requirement-extraction.service");
 const { AppError } = require("../src/utils/errors");
 
 const role = "Cloud DevOps Engineer";
@@ -144,4 +144,11 @@ test("returns a requirements array with unique IDs and non-empty text", () => {
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(result.requirements.every(({ text }) => text.trim().length > 0));
   assert.ok(result.requirements.every(({ priority }) => ["must", "nice"].includes(priority)));
+});
+
+test("extracts only explicitly labeled job titles", () => {
+  assert.equal(extractRequestedRole("Role: Senior Platform Engineer\nResponsibilities: Build services"), "Senior Platform Engineer");
+  assert.equal(extractRequestedRole("Position: Data Analyst"), "Data Analyst");
+  assert.equal(extractRequestedRole("Senior Platform Engineer\nBuild services"), null);
+  assert.equal(extractRequestedRole("We need an engineer with Node.js experience"), null);
 });

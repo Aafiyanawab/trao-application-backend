@@ -10,6 +10,7 @@ function validKit() {
       {
         id: "q-tech-1",
         question: "How would you design a resilient API?",
+        answer_outline: "Cover endpoint boundaries, validation, failure handling, and trade-offs.",
         category: "technical",
         difficulty: 2,
         rationale: "The role JD mentions API development.",
@@ -20,7 +21,8 @@ function validKit() {
       {
         id: "q-behavior-1",
         question: "Tell me about a time you resolved a disagreement.",
-        category: "behavioral",
+        answer_outline: "Explain the disagreement, how you listened, the action you took, and the outcome.",
+        category: "behavioural",
         difficulty: 1,
         rationale: "This explores collaboration.",
         requirement_ids: ["r1"],
@@ -223,6 +225,25 @@ test("accepts a valid question using the Gemini contract", () => {
   kit.non_technical_questions = [];
 
   assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
+});
+
+test("accepts every Appendix A question category and keeps answer outline distinct from rationale", () => {
+  const categories = ["technical", "behavioural", "system-design", "company-fit"];
+  for (const category of categories) {
+    const kit = validKit();
+    kit.technical_questions[0].category = category;
+    assert.equal(validateGeneratedInterviewKit(kit, requirementOptions), kit);
+  }
+  const kit = validKit();
+  assert.notEqual(kit.technical_questions[0].answer_outline, kit.technical_questions[0].rationale);
+});
+
+test("requires a non-empty answer outline and rejects secret material in it", () => {
+  for (const answerOutline of [undefined, "", "   ", 7, "GEMINI_API_KEY=someverylongsecretvalue"]) {
+    const kit = validKit();
+    kit.technical_questions[0].answer_outline = answerOutline;
+    assertInvalid(kit, "technical_questions[0].answer_outline");
+  }
 });
 
 test("accepts question traceability to one or multiple existing requirements", () => {

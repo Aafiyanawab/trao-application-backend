@@ -43,6 +43,7 @@ function generatedContent() {
       {
         id: "t1",
         question: "How do you test a service?",
+        answer_outline: "Discuss test boundaries, representative cases, and how results are checked.",
         category: "technical",
         difficulty: 2,
         rationale: "Tests protect service behavior.",
@@ -53,8 +54,9 @@ function generatedContent() {
       {
         id: "n1",
         question: "Tell me about a difficult collaboration.",
-        category: "behavioral",
+        category: "behavioural",
         difficulty: 1,
+        answer_outline: "Describe the situation, your actions, and how you resolved the disagreement.",
         rationale: "Assesses communication experience.",
         requirement_ids: ["r1"],
       },
@@ -154,7 +156,8 @@ test("uses only the explicitly configured model and Gemini structured-output con
     assert.deepEqual(GENERATION_RESPONSE_SCHEMA.properties.flashcards.items.required, [
       "id", "front", "back", "requirement_ids",
     ]);
-    assert.ok(QUESTION_CATEGORIES.includes("company_fit"));
+    assert.ok(GENERATION_RESPONSE_SCHEMA.properties.technical_questions.items.required.includes("answer_outline"));
+    assert.deepEqual(QUESTION_CATEGORIES, ["technical", "behavioural", "system-design", "company-fit"]);
   });
 });
 
@@ -413,4 +416,27 @@ test("does not expose credentials in successful return data", async () => {
     "follow_up_guidance",
     "flashcards",
   ]);
+});
+
+test("requires answer outlines separately from rationale and accepts only Appendix A categories", () => {
+  const content = generatedContent();
+  assert.notEqual(content.technical_questions[0].answer_outline, content.technical_questions[0].rationale);
+  for (const category of ["technical", "behavioural", "system-design", "company-fit"]) {
+    const categorized = structuredClone(content);
+    categorized.technical_questions[0].category = category;
+    assert.equal(validateGenerationResponse(categorized, generationContext().requirements), categorized);
+  }
+  for (const category of ["behavioral", "company_fit", "project", "unsupported"]) {
+    const categorized = structuredClone(content);
+    categorized.technical_questions[0].category = category;
+    assert.throws(() => validateGenerationResponse(categorized, generationContext().requirements), (error) =>
+      error.code === "GENERATION_SCHEMA_ERROR");
+  }
+  for (const answerOutline of [undefined, "", "   ", 4]) {
+    const invalid = structuredClone(content);
+    invalid.technical_questions[0].answer_outline = answerOutline;
+    assert.throws(() => validateGenerationResponse(invalid, generationContext().requirements), (error) =>
+      error.code === "GENERATION_SCHEMA_ERROR"
+      && error.details.some((detail) => detail.path === "technical_questions[0].answer_outline"));
+  }
 });

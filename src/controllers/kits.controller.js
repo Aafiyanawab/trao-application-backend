@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 const QUESTION_SECTIONS = ["technical_questions", "non_technical_questions"];
 const ITEM_SECTIONS = [...QUESTION_SECTIONS, "flashcards"];
 const BRIEF_FIELDS = ["summary", "what_they_do", "products_services", "industry_domain", "careers_information"];
-const QUESTION_FIELDS = ["question", "category", "difficulty", "rationale", "requirement_ids"];
+const QUESTION_FIELDS = ["question", "answer_outline", "category", "difficulty", "rationale", "requirement_ids"];
 const FLASHCARD_FIELDS = ["front", "back", "requirement_ids"];
 const SECRET_PATTERNS = [
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/,
@@ -42,7 +42,7 @@ function assertSafeText(value, path) {
 }
 
 function validateKitForEditing(kit, requirements) {
-  validateGeneratedInterviewKit(kit, { generationContext: { requirements } });
+  validateGeneratedInterviewKit(kit, { generationContext: { requirements }, allowLegacyQuestionContract: true });
   const seenIds = new Set();
   for (const section of ITEM_SECTIONS) {
     for (const item of kit[section]) {

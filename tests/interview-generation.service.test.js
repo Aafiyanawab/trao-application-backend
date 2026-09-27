@@ -44,10 +44,10 @@ function generationContext(overrides = {}) {
 function contractResult() {
   return {
     technical_questions: [
-      { id: "t1", question: "How would you design the API?", category: "technical", difficulty: 2, rationale: "The user JD mentions APIs.", requirement_ids: ["r1"] },
+      { id: "t1", question: "How would you design the API?", answer_outline: "Cover resource boundaries, validation, and failure handling.", category: "technical", difficulty: 2, rationale: "The user JD mentions APIs.", requirement_ids: ["r1"] },
     ],
     non_technical_questions: [
-      { id: "n1", question: "Describe a time you learned a new tool.", category: "behavioral", difficulty: 1, rationale: "Explore the candidate's learning approach.", requirement_ids: ["r1"] },
+      { id: "n1", question: "Describe a time you learned a new tool.", answer_outline: "Explain the context, how you learned, and how you applied the tool.", category: "behavioural", difficulty: 1, rationale: "Explore the candidate's learning approach.", requirement_ids: ["r1"] },
     ],
     interviewer_questions: ["How does the team define success for this role?"],
     interview_tips: ["Prepare a concrete API example from your experience."],
@@ -397,6 +397,9 @@ test("requests grounded requirement-linked flashcards and returns none without r
   assert.deepEqual(withRequirement.calls[0].generation_context.requirements, context.requirements);
   assert.ok(instructions.includes("flashcards"));
   assert.ok(instructions.includes("Every technical and non-technical question must include one or more requirement_ids"));
+  assert.ok(instructions.includes("answer_outline must give concise points"));
+  assert.ok(instructions.includes("rationale must remain the reason"));
+  assert.ok(instructions.includes("technical, behavioural, system-design, company-fit"));
   assert.ok(instructions.includes("never invent IDs"));
   assert.ok(instructions.includes("requirement_ids"));
   assert.ok(instructions.includes("Never create placeholder or invented requirement IDs"));

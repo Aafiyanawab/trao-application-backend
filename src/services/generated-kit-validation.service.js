@@ -11,6 +11,7 @@ const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /\b(?:GEMINI_API_KEY|GITHUB_TOKEN|API_KEY|ACCESS_TOKEN|SECRET_KEY)\s*[:=]\s*["']?[A-Za-z0-9/+_.=-]{12,}/i,
 ];
+const LEGACY_QUESTION_CATEGORIES = ["behavioral", "company_fit", "introduction", "motivation", "experience", "project", "certification", "skills"];
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -95,7 +96,8 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
 
       if (typeof question.category !== "string" || question.category.trim() === "") {
         details.push({ path: `${path}.category`, message: "must be a non-empty string" });
-      } else if (!QUESTION_CATEGORIES.includes(question.category)) {
+      } else if (!(QUESTION_CATEGORIES.includes(question.category)
+        || (options.allowLegacyQuestionContract && LEGACY_QUESTION_CATEGORIES.includes(question.category)))) {
         details.push({ path: `${path}.category`, message: "is not supported by the Gemini generation contract" });
       }
       if (!Number.isInteger(question.difficulty) || question.difficulty < 1 || question.difficulty > 3) {
@@ -105,6 +107,13 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
         details.push({ path: `${path}.rationale`, message: "must be a non-empty string" });
       } else {
         textValues.push({ path: `${path}.rationale`, value: question.rationale });
+      }
+      if (question.answer_outline === undefined && options.allowLegacyQuestionContract) {
+        // Existing saved kits predate answer outlines; allow builder operations to preserve them.
+      } else if (typeof question.answer_outline !== "string" || question.answer_outline.trim() === "") {
+        details.push({ path: `${path}.answer_outline`, message: "must be a non-empty string" });
+      } else {
+        textValues.push({ path: `${path}.answer_outline`, value: question.answer_outline });
       }
 
       if (!Array.isArray(question.requirement_ids) || question.requirement_ids.length === 0) {

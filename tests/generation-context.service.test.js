@@ -59,6 +59,40 @@ test("preserves public JD and user JD when a public role was found", () => {
   assert.equal(context.role.user_jd, "User-provided engineering JD.");
 });
 
+test("preserves explicitly supported seniority and responsibilities in role context", () => {
+  const input = completeResearchContext();
+  input.role.seniority = "Staff";
+  input.role.responsibilities = ["Design distributed services.", "Review production incidents."];
+  const context = buildGenerationContext(input);
+  assert.equal(context.role.seniority, "Staff");
+  assert.deepEqual(context.role.responsibilities, input.role.responsibilities);
+});
+
+test("extracts only explicit seniority and responsibilities from supplied role/JD text", () => {
+  const input = completeResearchContext();
+  input.role.requested_role = "Senior Software Engineer";
+  input.role.user_jd = "Responsibilities:\n- Build reliable APIs.\n- Review service changes.\nRequirements:\n- Experience with Node.js.";
+  input.role.matching_role_found = false;
+  input.role.job_source = "user_provided";
+  input.role.job_url = null;
+  input.role.job_title = null;
+  input.role.public_jd = null;
+  const context = buildGenerationContext(input);
+  assert.equal(context.role.seniority, "Senior");
+  assert.deepEqual(context.role.responsibilities, ["Build reliable APIs.", "Review service changes."]);
+  assert.deepEqual(context.requirements.map((item) => item.text), ["Experience with Node.js."]);
+});
+
+test("uses null seniority and an empty responsibilities list when details are not explicit", () => {
+  const input = completeResearchContext();
+  input.role.requested_role = "Software Engineer";
+  input.role.job_title = "Software Engineer";
+  input.role.user_jd = "Build reliable software.";
+  const context = buildGenerationContext(input);
+  assert.equal(context.role.seniority, null);
+  assert.deepEqual(context.role.responsibilities, []);
+});
+
 test("uses the user JD as source when no public role was found", () => {
   const input = completeResearchContext();
   input.role.matching_role_found = false;

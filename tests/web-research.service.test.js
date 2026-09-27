@@ -141,7 +141,7 @@ test("returns readable text from a successful HTML response as data", async () =
     request: async () => response(
       200,
       "text/html; charset=utf-8",
-      "<html><body><h1>About us</h1><p>We build tools &amp; services.</p><script>stealSecrets()</script></body></html>",
+      "<html><head><meta property=\"og:site_name\" content=\"Acme &amp; Co\"></head><body><h1>About us</h1><p>We build tools &amp; services.</p><script>stealSecrets()</script></body></html>",
     ),
   });
   const result = await service.fetchCompanyPage("https://company.example.com/about");
@@ -151,6 +151,7 @@ test("returns readable text from a successful HTML response as data", async () =
   assert.equal(result.status, 200);
   assert.equal(result.content_type, "text/html");
   assert.equal(result.text, "About us\nWe build tools & services.");
+  assert.equal(result.site_name, "Acme & Co");
   assert.equal(result.text.includes("stealSecrets"), false);
 });
 

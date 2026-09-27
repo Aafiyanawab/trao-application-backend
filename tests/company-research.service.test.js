@@ -57,6 +57,24 @@ test("researches the supplied company homepage first", async () => {
   assert.equal(result.company.summary, "Software for logistics teams.");
 });
 
+test("uses explicit homepage site metadata when company_name is omitted", async () => {
+  const { researchCompany } = createResearch({
+    [homeUrl]: { ...page(homeUrl, { text: "Company homepage" }), site_name: "Acme & Co" },
+  });
+  const result = await researchCompany(input({ company_name: undefined }));
+  assert.equal(result.company.name, "Acme & Co");
+});
+
+test("does not guess company name from hostname or page title", async () => {
+  const { researchCompany } = createResearch({
+    [homeUrl]: page(homeUrl, { title: "Acme Systems", text: "Company homepage" }),
+  });
+  await assert.rejects(
+    researchCompany(input({ company_name: undefined })),
+    (error) => error.code === "COMPANY_NAME_UNAVAILABLE",
+  );
+});
+
 test("extracts company information from discovered about and products pages", async () => {
   const aboutUrl = "https://acme.example.com/about";
   const productsUrl = "https://acme.example.com/products";

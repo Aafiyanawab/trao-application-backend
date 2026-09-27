@@ -15,7 +15,7 @@ function generationContext() {
 function pipelineResult() {
   return {
     kit: {
-      technical_questions: [{ id: "q1", question: "How do you build APIs?", category: "technical", difficulty: 2, rationale: "Tests API design.", requirement_ids: ["r1"] }],
+      technical_questions: [{ id: "q1", question: "How do you build APIs?", answer_outline: "Cover routing, validation, and error handling.", category: "technical", difficulty: 2, rationale: "Tests API design.", requirement_ids: ["r1"] }],
       non_technical_questions: [],
       interviewer_questions: [],
       interview_tips: [],

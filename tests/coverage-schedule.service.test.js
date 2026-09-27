@@ -38,6 +38,7 @@ function question(id, text, requirementIds, difficulty = 2) {
   return {
     id,
     question: text,
+    answer_outline: "Explain the relevant approach and its trade-offs.",
     category: "technical",
     difficulty,
     rationale: "Targets an explicit JD requirement.",
