@@ -1,5 +1,5 @@
 const { AppError } = require("../utils/errors");
-const { fetchCompanyPage } = require("./web-research.service");
+const { fetchCompanyPage, fetchRobotsTxt } = require("./web-research.service");
 
 const DEFAULT_MAX_PAGES = 6;
 const MAX_ALLOWED_PAGES = 12;
@@ -111,9 +111,68 @@ function validateInput(input) {
   if (details.length > 0) throw validationError(details);
 }
 
-function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages = DEFAULT_MAX_PAGES } = {}) {
+function parseRobotsGroups(text) {
+  const groups = [];
+  let current = null;
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const line = rawLine.split("#", 1)[0].trim();
+    if (!line) continue;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (name === "user-agent" && value) {
+      if (!current || current.rules.length > 0) {
+        current = { agents: [], rules: [] };
+        groups.push(current);
+      }
+      current.agents.push(value.toLowerCase());
+    } else if (current && (name === "allow" || name === "disallow") && value) {
+      current.rules.push({ allow: name === "allow", path: value });
+    }
+  }
+  return groups;
+}
+
+function robotsAllows(text, pageUrl, productToken = "trao-researchfetcher") {
+  const groups = parseRobotsGroups(text);
+  const specificGroups = groups.filter((group) =>
+    group.agents.some((agent) => agent !== "*" && productToken.startsWith(agent)),
+  );
+  const mostSpecificLength = specificGroups.reduce(
+    (length, group) => Math.max(length, ...group.agents.filter((agent) => agent !== "*").map((agent) => agent.length)),
+    0,
+  );
+  const selectedGroups = mostSpecificLength > 0
+    ? specificGroups.filter((group) => group.agents.some(
+      (agent) => agent.length === mostSpecificLength && productToken.startsWith(agent),
+    ))
+    : groups.filter((group) => group.agents.includes("*"));
+  const target = new URL(pageUrl);
+  const targetPath = `${target.pathname}${target.search}`;
+  const matchingRules = selectedGroups.flatMap((group) => group.rules).filter((rule) => {
+    const terminal = rule.path.endsWith("$");
+    const source = terminal ? rule.path.slice(0, -1) : rule.path;
+    const pattern = source.split("*").map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&")).join(".*");
+    return new RegExp(`^${pattern}${terminal ? "$" : ""}`).test(targetPath);
+  }).sort((left, right) => {
+    const leftLength = left.path.replace(/[\*$]/g, "").length;
+    const rightLength = right.path.replace(/[\*$]/g, "").length;
+    return rightLength - leftLength || Number(right.allow) - Number(left.allow);
+  });
+  return matchingRules.length === 0 || matchingRules[0].allow;
+}
+
+function createCompanyResearchService({
+  fetchPage = fetchCompanyPage,
+  fetchRobots = fetchRobotsTxt,
+  maxPages = DEFAULT_MAX_PAGES,
+} = {}) {
   if (typeof fetchPage !== "function") {
     throw new TypeError("fetchPage must be a function");
+  }
+  if (typeof fetchRobots !== "function") {
+    throw new TypeError("fetchRobots must be a function");
   }
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > MAX_ALLOWED_PAGES) {
     throw new TypeError(`maxPages must be an integer between 1 and ${MAX_ALLOWED_PAGES}`);
@@ -130,9 +189,51 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
     const warnings = [];
     const visited = new Set();
     const queued = new Set();
+    const robotsByOrigin = new Map();
     let discoverySequence = 0;
     let candidates = [{ url: companyUrl, type: "company", priority: -1, roleScore: 0, sequence: discoverySequence++ }];
     queued.add(canonicalUrl(companyUrl));
+
+    async function getRobotsPolicy(pageUrl) {
+      const origin = new URL(pageUrl).origin;
+      if (robotsByOrigin.has(origin)) return robotsByOrigin.get(origin);
+
+      let policy;
+      try {
+        const result = await fetchRobots(pageUrl);
+        if (result.status >= 400 && result.status < 500 && result.status !== 429) {
+          policy = { allowed: true, rules: "", warning: null };
+        } else if (result.status >= 200 && result.status < 300 && typeof result.text === "string") {
+          policy = { allowed: true, rules: result.text, warning: null };
+        } else {
+          policy = {
+            allowed: false,
+            rules: "",
+            warning: {
+              code: result.status === 429 ? "HTTP_RATE_LIMITED" : "ROBOTS_UNAVAILABLE",
+              message: result.status === 429
+                ? "robots.txt remained rate limited after retries; company pages were skipped conservatively."
+                : "robots.txt could not be retrieved; company pages were skipped conservatively.",
+            },
+          };
+        }
+      } catch (error) {
+        policy = {
+          allowed: false,
+          rules: "",
+          warning: {
+            code: error?.code === "HTTP_RATE_LIMITED" ? "HTTP_RATE_LIMITED" : "ROBOTS_UNAVAILABLE",
+            message: error?.code === "HTTP_RATE_LIMITED"
+              ? "robots.txt remained rate limited after retries; company pages were skipped conservatively."
+              : "robots.txt could not be retrieved; company pages were skipped conservatively.",
+          },
+        };
+      }
+
+      robotsByOrigin.set(origin, policy);
+      if (policy.warning) warnings.push({ url: `${origin}/robots.txt`, ...policy.warning });
+      return policy;
+    }
 
     while (pages.length < maxPages && candidates.length > 0) {
       candidates.sort((left, right) =>
@@ -144,6 +245,19 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
       const key = canonicalUrl(candidate.url);
       if (visited.has(key)) continue;
       visited.add(key);
+
+      const robotsPolicy = await getRobotsPolicy(candidate.url);
+      if (!robotsPolicy.allowed) {
+        continue;
+      }
+      if (!robotsAllows(robotsPolicy.rules, candidate.url)) {
+        warnings.push({
+          url: candidate.url,
+          code: "ROBOTS_DISALLOW",
+          message: "This page was skipped because robots.txt disallows crawling it.",
+        });
+        continue;
+      }
 
       let fetched;
       try {
@@ -172,9 +286,6 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
       };
       if (!companyName && candidate.type === "company" && typeof fetched.site_name === "string" && fetched.site_name.trim()) {
         companyName = fetched.site_name.trim();
-      }
-      if (!companyName && candidate.type === "company") {
-        throw new AppError("Company name is unavailable from explicit homepage metadata", "COMPANY_NAME_UNAVAILABLE", 422);
       }
       pages.push(page);
 
@@ -218,6 +329,24 @@ function createCompanyResearchService({ fetchPage = fetchCompanyPage, maxPages =
       type: page.type,
       text: excerpt(page.text),
     }));
+    if (!companyName) {
+      if (pages.length === 0) {
+        const partialResearchWarning = warnings.find((warning) =>
+          ["ROBOTS_DISALLOW", "ROBOTS_UNAVAILABLE", "HTTP_RATE_LIMITED"].includes(warning.code),
+        );
+        if (!partialResearchWarning) {
+          throw new AppError("Company site could not be reached and its identity is unavailable", "COMPANY_UNREACHABLE", 502);
+        }
+      }
+      if (pages.length > 0) warnings.push({
+        code: "COMPANY_IDENTITY_UNAVAILABLE",
+        message: "Company pages were retrieved, but no explicit company name was available.",
+      });
+    }
+    warnings.push({
+      code: "PUBLIC_DISCUSSION_UNAVAILABLE",
+      message: "Public interview discussion discovery is not configured.",
+    });
 
     return {
       company: {
@@ -251,5 +380,7 @@ const defaultService = createCompanyResearchService();
 
 module.exports = {
   createCompanyResearchService,
+  parseRobotsGroups,
+  robotsAllows,
   researchCompany: defaultService.researchCompany,
 };

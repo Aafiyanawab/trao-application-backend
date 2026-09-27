@@ -63,6 +63,7 @@ test("rejects a missing company URL", async () => {
 
 test("rejects malformed URLs", async () => {
   await expectValidationFailure("https://%", "Company URL is malformed");
+  await expectValidationFailure("http://localhost:99999/acme/", "Company URL is malformed");
 });
 
 test("rejects unsupported URL schemes", async () => {
@@ -73,6 +74,68 @@ test("rejects unsupported URL schemes", async () => {
 
 test("rejects localhost", async () => {
   await expectValidationFailure("http://localhost", "Company URL hostname is not allowed");
+});
+
+test("rejects localhost in production and when the environment is unspecified", async () => {
+  for (const environment of ["production", undefined]) {
+    await assert.rejects(
+      validateAndResolveCompanyUrl("http://localhost:8099/acme/", lookupPublic, { environment }),
+      (error) => error.code === "VALIDATION_ERROR" && error.message === "Company URL hostname is not allowed",
+    );
+  }
+});
+
+test("accepts only HTTP localhost in development and test modes", async () => {
+  for (const environment of ["development", "test"]) {
+    const result = await validateAndResolveCompanyUrl(
+      "http://localhost:8099/acme/", lookupPublic, { environment },
+    );
+    assert.equal(result.url.hostname, "localhost");
+    assert.equal(result.url.port, "8099");
+    assert.deepEqual(result.addresses, [{ address: "127.0.0.1", family: 4 }]);
+  }
+});
+
+test("keeps loopback and private IP literals blocked in development and test modes", async () => {
+  for (const environment of ["development", "test"]) {
+    for (const url of [
+      "http://127.0.0.1:8099/acme/",
+      "http://[::1]:8099/acme/",
+      "http://192.168.1.10:8099/acme/",
+    ]) {
+      await assert.rejects(
+        validateAndResolveCompanyUrl(url, lookupPublic, { environment }),
+        (error) => error.code === "VALIDATION_ERROR" && error.message === "Company URL resolves to a restricted network address",
+      );
+    }
+  }
+});
+
+test("rejects loopback and private IP literals in production", async () => {
+  for (const url of [
+    "http://127.0.0.1:8099/acme/",
+    "http://[::1]:8099/acme/",
+    "http://10.1.2.3:8099/acme/",
+    "http://192.168.1.10:8099/acme/",
+    "http://172.16.0.10:8099/acme/",
+  ]) {
+    await assert.rejects(
+      validateAndResolveCompanyUrl(url, lookupPublic, { environment: "production" }),
+      (error) => error.code === "VALIDATION_ERROR" && error.message === "Company URL resolves to a restricted network address",
+    );
+  }
+});
+
+test("rejects HTTPS localhost and credentialed localhost URLs in development", async () => {
+  for (const url of [
+    "https://localhost:8099/acme/",
+    "http://user:pass@localhost:8099/acme/",
+  ]) {
+    await assert.rejects(
+      validateAndResolveCompanyUrl(url, lookupPublic, { environment: "development" }),
+      (error) => error.code === "VALIDATION_ERROR",
+    );
+  }
 });
 
 test("rejects 127.0.0.1", async () => {
@@ -153,6 +216,41 @@ test("returns readable text from a successful HTML response as data", async () =
   assert.equal(result.text, "About us\nWe build tools & services.");
   assert.equal(result.site_name, "Acme & Co");
   assert.equal(result.text.includes("stealSecrets"), false);
+});
+
+test("extracts an explicit application-name metadata value", async () => {
+  const service = createWebResearchService({
+    lookup: lookupPublic,
+    request: async () => response(
+      200,
+      "text/html",
+      '<html><head><meta name="application-name" content="Acme Platform"></head><body>Text</body></html>',
+    ),
+  });
+  const result = await service.fetchCompanyPage("https://company.example.com/");
+
+  assert.equal(result.site_name, "Acme Platform");
+});
+
+test("fetches localhost in test mode through mocked DNS and HTTP boundaries", async () => {
+  let lookupCalls = 0;
+  const requests = [];
+  const service = createWebResearchService({
+    environment: "test",
+    lookup: async () => { lookupCalls += 1; throw new Error("localhost uses the scoped loopback mapping"); },
+    request: async (url, address) => {
+      requests.push({ url: url.href, address });
+      return response(200, "text/html", "<p>Local test site</p>");
+    },
+  });
+  const result = await service.fetchCompanyPage("http://localhost:8099/acme/");
+
+  assert.equal(lookupCalls, 0);
+  assert.equal(result.text, "Local test site");
+  assert.deepEqual(requests, [{
+    url: "http://localhost:8099/acme/",
+    address: { address: "127.0.0.1", family: 4 },
+  }]);
 });
 
 test("accepts plain text content", async () => {
@@ -266,6 +364,73 @@ test("returns safe structured errors", async () => {
       return true;
     },
   );
+});
+
+test("retries HTTP 429 with bounded exponential backoff", async () => {
+  let calls = 0;
+  const delays = [];
+  const service = createWebResearchService({
+    lookup: lookupPublic,
+    request: async () => (++calls < 3
+      ? response(429, "text/plain", "busy")
+      : response(200, "text/plain", "Recovered")),
+    sleep: async (delay) => delays.push(delay),
+    backoffMs: 25,
+  });
+
+  const result = await service.fetchCompanyPage("https://company.example.com");
+  assert.equal(result.text, "Recovered");
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [25, 50]);
+});
+
+test("honors a bounded Retry-After response header", async () => {
+  const delays = [];
+  let calls = 0;
+  const service = createWebResearchService({
+    lookup: lookupPublic,
+    request: async () => (++calls === 1
+      ? response(429, "text/plain", "busy", { "retry-after": "1" })
+      : response(200, "text/plain", "Recovered")),
+    sleep: async (delay) => delays.push(delay),
+    maxRetryAfterMs: 1000,
+  });
+
+  await service.fetchCompanyPage("https://company.example.com");
+  assert.deepEqual(delays, [1000]);
+});
+
+test("returns a structured error when the bounded HTTP retries are exhausted", async () => {
+  let calls = 0;
+  const delays = [];
+  const service = createWebResearchService({
+    lookup: lookupPublic,
+    request: async () => { calls += 1; return response(429, "text/plain", "busy"); },
+    sleep: async (delay) => delays.push(delay),
+    maxRetries: 2,
+  });
+
+  await assert.rejects(
+    service.fetchCompanyPage("https://company.example.com"),
+    (error) => error.code === "HTTP_RATE_LIMITED" && error.statusCode === 429,
+  );
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [100, 200]);
+});
+
+test("fetches robots.txt through the same validated HTTP boundary", async () => {
+  const requested = [];
+  const service = createWebResearchService({
+    lookup: lookupPublic,
+    request: async (url) => {
+      requested.push(url.href);
+      return response(404, "text/plain", "Not found");
+    },
+  });
+
+  const result = await service.fetchRobotsTxt("https://company.example.com/path/page");
+  assert.deepEqual(requested, ["https://company.example.com/robots.txt"]);
+  assert.equal(result.status, 404);
 });
 
 test("does not mutate the service configuration object", async () => {

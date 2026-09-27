@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+if (require.main === module) {
+  require("dotenv").config();
+}
+
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { evaluateBatch } = require("../services/batch-evaluator.service");

@@ -141,7 +141,7 @@ function validateHostname(hostname) {
   return normalized;
 }
 
-async function validateAndResolveCompanyUrl(value, lookup = dns.lookup) {
+async function validateAndResolveCompanyUrl(value, lookup = dns.lookup, { environment = process.env.NODE_ENV } = {}) {
   if (typeof value !== "string" || value.trim() === "") {
     throw validationError("A company URL is required");
   }
@@ -160,10 +160,21 @@ async function validateAndResolveCompanyUrl(value, lookup = dns.lookup) {
     throw validationError("Company URL must not contain credentials");
   }
 
-  const hostname = validateHostname(getUnbracketedHostname(url.hostname));
+  const rawHostname = getUnbracketedHostname(url.hostname);
+  const isLocalhostDevelopmentRequest =
+    rawHostname === "localhost" &&
+    url.protocol === "http:" &&
+    ["development", "test"].includes(environment);
+  if (rawHostname === "localhost" && !isLocalhostDevelopmentRequest) {
+    throw validationError("Company URL hostname is not allowed");
+  }
+
+  const hostname = isLocalhostDevelopmentRequest ? rawHostname : validateHostname(rawHostname);
   let addresses;
 
-  if (net.isIP(hostname)) {
+  if (isLocalhostDevelopmentRequest) {
+    addresses = [{ address: "127.0.0.1", family: 4 }];
+  } else if (net.isIP(hostname)) {
     addresses = [{ address: hostname, family: net.isIP(hostname) }];
   } else {
     try {
@@ -176,7 +187,7 @@ async function validateAndResolveCompanyUrl(value, lookup = dns.lookup) {
   if (!Array.isArray(addresses) || addresses.length === 0) {
     throw validationError("Company URL hostname could not be resolved");
   }
-  if (addresses.some((entry) => !entry || !isPublicAddress(entry.address))) {
+  if (!isLocalhostDevelopmentRequest && addresses.some((entry) => !entry || !isPublicAddress(entry.address))) {
     throw validationError("Company URL resolves to a restricted network address");
   }
 

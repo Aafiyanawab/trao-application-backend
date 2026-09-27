@@ -146,9 +146,35 @@ test("returns a requirements array with unique IDs and non-empty text", () => {
   assert.ok(result.requirements.every(({ priority }) => ["must", "nice"].includes(priority)));
 });
 
-test("extracts only explicitly labeled job titles", () => {
-  assert.equal(extractRequestedRole("Role: Senior Platform Engineer\nResponsibilities: Build services"), "Senior Platform Engineer");
+test("extracts explicitly labeled job titles", () => {
+  assert.equal(extractRequestedRole("Job Title: Senior Backend Engineer"), "Senior Backend Engineer");
   assert.equal(extractRequestedRole("Position: Data Analyst"), "Data Analyst");
-  assert.equal(extractRequestedRole("Senior Platform Engineer\nBuild services"), null);
-  assert.equal(extractRequestedRole("We need an engineer with Node.js experience"), null);
+  assert.equal(extractRequestedRole("Role: Senior Platform Engineer\nResponsibilities: Build services"), "Senior Platform Engineer");
+});
+
+test("accepts a conservative unlabeled standalone job title", () => {
+  for (const title of [
+    "Senior Backend Engineer",
+    "DevOps Engineer",
+    "Software Engineer II",
+    "Cloud Security Engineer",
+  ]) {
+    assert.equal(extractRequestedRole(`${title}\n\nWe are hiring.`), title);
+  }
+});
+
+test("rejects sentence-like first lines and section headings as role titles", () => {
+  for (const jd of [
+    "We are looking for an experienced engineer to join our team.\nRequirements: Node.js",
+    "About the company\nWe build software.",
+    "Responsibilities\nBuild reliable APIs.",
+    "Requirements\nExperience with Node.js.",
+    "Join our growing team.",
+  ]) {
+    assert.equal(extractRequestedRole(jd), null);
+  }
+});
+
+test("does not infer a role from a sparse JD without title evidence", () => {
+  assert.equal(extractRequestedRole("Build reliable services.\nWork with engineers."), null);
 });

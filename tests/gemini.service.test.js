@@ -348,13 +348,21 @@ test("sanitizes provider failures and does not expose the API key", async () => 
 
 test("sanitizes Gemini API error responses", async () => {
   const apiKey = "secret-do-not-leak";
+  let calls = 0;
+  const delays = [];
   const service = createGeminiService({
     getApiKey: () => apiKey,
-    request: async () => ({
-      ok: false,
-      status: 429,
-      json: async () => ({ error: `quota failed for ${apiKey}` }),
-    }),
+    request: async () => {
+      calls += 1;
+      return {
+        ok: false,
+        status: 429,
+        headers: { "retry-after": "0" },
+        json: async () => ({ error: `quota failed for ${apiKey}` }),
+      };
+    },
+    maxRetries: 2,
+    sleep: async (delay) => delays.push(delay),
   });
 
   await assert.rejects(
@@ -363,9 +371,31 @@ test("sanitizes Gemini API error responses", async () => {
       assert.equal(error.code, "GEMINI_API_ERROR");
       assert.equal(error.message, "Gemini could not generate interview content");
       assert.equal(JSON.stringify({ message: error.message, details: error.details }).includes(apiKey), false);
+      assert.equal(calls, 3);
       return true;
     },
   );
+  assert.deepEqual(delays, [0, 0]);
+});
+
+test("retries a Gemini rate limit and returns valid structured output", async () => {
+  let calls = 0;
+  const delays = [];
+  const service = createGeminiService({
+    getApiKey: () => "test-secret-key",
+    request: async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, status: 429, headers: { "retry-after": "0" } }
+        : successfulResponse(generatedContent());
+    },
+    sleep: async (delay) => delays.push(delay),
+  });
+
+  const result = await service.generateInterviewContent(generationContext());
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [0]);
+  assert.deepEqual(result.technical_questions, generatedContent().technical_questions);
 });
 
 test("maps a request timeout to a safe timeout error", async () => {

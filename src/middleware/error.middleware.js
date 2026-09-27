@@ -14,9 +14,10 @@ function errorHandler(error, req, res, next) {
     });
   }
 
-  const statusCode = error.statusCode || 500;
-  const code = error.code || "INTERNAL_ERROR";
-  const message = statusCode >= 500 ? "An unexpected error occurred" : error.message;
+  const knownAppError = error instanceof AppError;
+  const statusCode = knownAppError ? error.statusCode : 500;
+  const code = knownAppError ? error.code : "INTERNAL_ERROR";
+  const message = knownAppError ? error.message : "An unexpected error occurred";
 
   if (statusCode >= 500) {
     console.error(error);
@@ -29,7 +30,7 @@ function errorHandler(error, req, res, next) {
     },
   };
 
-  if (error.details) {
+  if (knownAppError && error.details) {
     response.error.details = error.details;
   }
 

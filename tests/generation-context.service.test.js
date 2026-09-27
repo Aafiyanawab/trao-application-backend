@@ -59,6 +59,16 @@ test("preserves public JD and user JD when a public role was found", () => {
   assert.equal(context.role.user_jd, "User-provided engineering JD.");
 });
 
+test("keeps the existing generation-context contract strict about company identity", () => {
+  const input = completeResearchContext();
+  input.company.name = null;
+
+  assert.throws(
+    () => buildGenerationContext(input),
+    (error) => error instanceof AppError && error.code === "VALIDATION_ERROR",
+  );
+});
+
 test("preserves explicitly supported seniority and responsibilities in role context", () => {
   const input = completeResearchContext();
   input.role.seniority = "Staff";

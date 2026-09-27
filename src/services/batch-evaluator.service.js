@@ -107,6 +107,18 @@ function createBatchEvaluator({
           role,
           user_jd: item.jd,
         });
+        if (typeof researched?.company?.name !== "string" || !researched.company.name.trim()) {
+          const blockingWarning = (researched?.pages_used?.length ?? 0) === 0
+            ? researched?.warnings?.find((warning) =>
+              ["ROBOTS_DISALLOW", "ROBOTS_UNAVAILABLE", "HTTP_RATE_LIMITED"].includes(warning?.code),
+            )
+            : null;
+          throw new AppError(
+            blockingWarning?.message || "Company research completed, but no trustworthy company name was available; generation was skipped.",
+            blockingWarning?.code || "COMPANY_IDENTITY_UNAVAILABLE",
+            422,
+          );
+        }
         const context = buildContext({
           company: researched.company,
           role: { ...researched.role_research, user_jd: researched.user_jd },

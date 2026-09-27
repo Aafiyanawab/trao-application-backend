@@ -7,6 +7,9 @@ const { validateAndResolveCompanyUrl } = require("../utils/url-security");
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_BACKOFF_MS = 100;
+const DEFAULT_MAX_RETRY_AFTER_MS = 2000;
 const MAX_REDIRECTS = 5;
 const ALLOWED_CONTENT_TYPES = new Set([
   "text/html",
@@ -183,12 +186,37 @@ function abortableRequest(requestImpl, url, address, maxResponseBytes, timeoutMs
   return Promise.race([requestPromise, timeoutPromise]).finally(() => clearTimeout(timeout));
 }
 
-function validateOptions({ timeoutMs, maxResponseBytes }) {
+function headerValue(headers, name) {
+  if (!headers) return undefined;
+  if (typeof headers.get === "function") return headers.get(name);
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry?.[1];
+}
+
+function retryAfterDelay(headers, now) {
+  const value = headerValue(headers, "retry-after");
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const timestamp = Date.parse(String(value));
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - now()) : null;
+}
+
+function validateOptions({ timeoutMs, maxResponseBytes, maxRetries, backoffMs, maxRetryAfterMs }) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     throw new TypeError("timeoutMs must be a positive integer");
   }
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
     throw new TypeError("maxResponseBytes must be a positive integer");
+  }
+  if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 5) {
+    throw new TypeError("maxRetries must be an integer between 0 and 5");
+  }
+  if (!Number.isInteger(backoffMs) || backoffMs < 0 || backoffMs > 5000) {
+    throw new TypeError("backoffMs must be an integer between 0 and 5000");
+  }
+  if (!Number.isInteger(maxRetryAfterMs) || maxRetryAfterMs < 0 || maxRetryAfterMs > 10000) {
+    throw new TypeError("maxRetryAfterMs must be an integer between 0 and 10000");
   }
 }
 
@@ -198,28 +226,46 @@ function createWebResearchService({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   maxRedirects = MAX_REDIRECTS,
+  environment = process.env.NODE_ENV,
+  maxRetries = DEFAULT_MAX_RETRIES,
+  backoffMs = DEFAULT_BACKOFF_MS,
+  maxRetryAfterMs = DEFAULT_MAX_RETRY_AFTER_MS,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  now = Date.now,
 } = {}) {
-  validateOptions({ timeoutMs, maxResponseBytes });
+  validateOptions({ timeoutMs, maxResponseBytes, maxRetries, backoffMs, maxRetryAfterMs });
+  if (typeof sleep !== "function") throw new TypeError("sleep must be a function");
+  if (typeof now !== "function") throw new TypeError("now must be a function");
 
   if (!Number.isInteger(maxRedirects) || maxRedirects < 0) {
     throw new TypeError("maxRedirects must be a non-negative integer");
   }
 
-  async function fetchCompanyPage(value) {
-    let current = await validateAndResolveCompanyUrl(value, lookup);
+  async function makeRequestWithRetries(url, address) {
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await abortableRequest(request, url, address, maxResponseBytes, timeoutMs);
+      if (response?.status !== 429) return response;
+      if (attempt >= maxRetries) {
+        throw fetchError("HTTP_RATE_LIMITED", "Company page request was rate limited", 429);
+      }
+      const retryAfter = retryAfterDelay(response.headers, now);
+      const delay = retryAfter ?? Math.min(backoffMs * (2 ** attempt), maxRetryAfterMs);
+      if (delay > maxRetryAfterMs) {
+        throw fetchError("HTTP_RATE_LIMITED", "Company page request was rate limited", 429);
+      }
+      await sleep(delay);
+    }
+  }
+
+  async function fetchPage(value, { returnHttpErrors = false } = {}) {
+    let current = await validateAndResolveCompanyUrl(value, lookup, { environment });
     const initialUrl = current.url.href;
 
     for (let redirectCount = 0; ; redirectCount += 1) {
       const address = current.addresses[0];
       let response;
       try {
-        response = await abortableRequest(
-          request,
-          current.url,
-          address,
-          maxResponseBytes,
-          timeoutMs,
-        );
+        response = await makeRequestWithRetries(current.url, address);
       } catch (error) {
         if (error instanceof AppError) {
           throw error;
@@ -240,11 +286,24 @@ function createWebResearchService({
         } catch {
           throw fetchError("INVALID_REDIRECT", "Company page returned an invalid redirect");
         }
-        current = await validateAndResolveCompanyUrl(nextUrl.href, lookup);
+        current = await validateAndResolveCompanyUrl(nextUrl.href, lookup, { environment });
         continue;
       }
 
       if (status < 200 || status >= 300) {
+        if (returnHttpErrors) {
+          return {
+            url: initialUrl,
+            final_url: current.url.href,
+            status,
+            content_type: null,
+            text: "",
+            title: "",
+            site_name: "",
+            headings: [],
+            links: [],
+          };
+        }
         throw fetchError("COMPANY_FETCH_FAILED", "Company page could not be retrieved");
       }
 
@@ -277,8 +336,26 @@ function createWebResearchService({
     }
   }
 
+  async function fetchCompanyPage(value) {
+    return fetchPage(value);
+  }
+
+  async function fetchRobotsTxt(value) {
+    let robotsUrl;
+    try {
+      robotsUrl = new URL(value);
+      robotsUrl.pathname = "/robots.txt";
+      robotsUrl.search = "";
+      robotsUrl.hash = "";
+    } catch {
+      throw fetchError("INVALID_ROBOTS_URL", "Company robots URL is invalid", 400);
+    }
+    return fetchPage(robotsUrl.href, { returnHttpErrors: true });
+  }
+
   return {
     fetchCompanyPage,
+    fetchRobotsTxt,
   };
 }
 
@@ -287,4 +364,5 @@ const defaultService = createWebResearchService();
 module.exports = {
   createWebResearchService,
   fetchCompanyPage: defaultService.fetchCompanyPage,
+  fetchRobotsTxt: defaultService.fetchRobotsTxt,
 };

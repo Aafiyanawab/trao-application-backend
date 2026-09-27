@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { createKitService } = require("../src/services/kit.service");
+const { fingerprintGenerationRequest } = require("../src/services/kit.service");
 const { AppError } = require("../src/utils/errors");
 
 function generationContext() {
@@ -33,13 +34,23 @@ function fakeDatabase() {
   const indexes = [];
   const collection = {
     createIndex: async (keys, options) => { indexes.push({ keys, options }); },
-    insertOne: async (document) => { documents.push(document); return { insertedId: document.kitId }; },
+    insertOne: async (document) => {
+      if (document.requestFingerprint && documents.some((item) =>
+        item.userId === document.userId && item.requestFingerprint === document.requestFingerprint)) {
+        const error = new Error("duplicate key");
+        error.code = 11000;
+        throw error;
+      }
+      documents.push(document);
+      return { insertedId: document.kitId };
+    },
     find: (query) => ({
       sort: () => ({
         toArray: async () => documents.filter((item) => item.userId === query.userId),
       }),
     }),
-    findOne: async (query) => documents.find((item) => item.userId === query.userId && item.kitId === query.kitId) ?? null,
+    findOne: async (query) => documents.find((item) => Object.entries(query).every(([key, value]) =>
+      item[key] === value)) ?? null,
     updateOne: async (query, update) => {
       const found = documents.find((item) => item.userId === query.userId
         && item.kitId === query.kitId
@@ -91,7 +102,57 @@ test("persists the final pipeline result and returns a safe reopenable kit", asy
   assert.equal(Object.hasOwn(result, "passwordHash"), false);
   assert.equal(Object.hasOwn(documents[0], "candidateContext"), false);
   assert.equal(Object.hasOwn(documents[0], "githubContext"), false);
-  assert.equal(indexes.length, 2);
+  assert.equal(indexes.length, 3);
+  assert.deepEqual(indexes[2], {
+    keys: { userId: 1, requestFingerprint: 1 },
+    options: { unique: true, partialFilterExpression: { requestFingerprint: { $type: "string" } } },
+  });
+});
+
+test("fingerprints the logical request deterministically without depending on object key order", () => {
+  const first = fingerprintGenerationRequest({
+    generationContext: { company: { name: "Acme", url: "https://acme.example" }, requirements: [] },
+    candidateContext: { skills: ["Node.js"], projects: [{ name: "API" }] },
+    daysAvailable: 4,
+  });
+  const reordered = fingerprintGenerationRequest({
+    daysAvailable: 4,
+    candidateContext: { projects: [{ name: "API" }], skills: ["Node.js"] },
+    generationContext: { requirements: [], company: { url: "https://acme.example", name: "Acme" } },
+  });
+  const changedDays = fingerprintGenerationRequest({
+    generationContext: { company: { name: "Acme", url: "https://acme.example" }, requirements: [] },
+    candidateContext: { skills: ["Node.js"], projects: [{ name: "API" }] },
+    daysAvailable: 5,
+  });
+
+  assert.equal(first, reordered);
+  assert.notEqual(first, changedDays);
+  assert.match(first, /^[a-f0-9]{64}$/);
+});
+
+test("deduplicates concurrent identical requests per user in the existing kits collection", async () => {
+  const { database, documents } = fakeDatabase();
+  let id = 0;
+  const service = createKitService({ getDatabase: () => database, createKitId: () => `kit-${++id}` });
+  const requestFingerprint = "a".repeat(64);
+  const params = {
+    generationContext: generationContext(),
+    pipelineResult: pipelineResult(),
+    requestFingerprint,
+  };
+
+  const [first, second] = await Promise.all([
+    service.createKitForUser("owner-1", params),
+    service.createKitForUser("owner-1", params),
+  ]);
+
+  assert.equal(documents.length, 1);
+  assert.equal(first.id, second.id);
+  assert.equal(documents[0].requestFingerprint, requestFingerprint);
+  assert.equal(Object.hasOwn(first, "requestFingerprint"), false);
+  assert.equal(await service.getKitForRequest("owner-1", requestFingerprint).then((kit) => kit.id), first.id);
+  assert.equal(await service.getKitForRequest("owner-2", requestFingerprint), null);
 });
 
 test("updates only owner-scoped fields and refreshes updatedAt", async () => {
@@ -118,6 +179,23 @@ test("updates only owner-scoped fields and refreshes updatedAt", async () => {
   assert.equal(documents[0].userId, "owner-1");
   await assert.rejects(service.updateKitForUser("owner-2", created.id, { title: "forged" }));
   assert.equal(documents[0].title, "Acme — Engineer");
+});
+
+test("leaves the persisted document unchanged when an atomic update loses its version match", async () => {
+  const { database, documents } = fakeDatabase();
+  const service = createKitService({ getDatabase: () => database, createKitId: () => "stable-kit-id" });
+  const created = await service.createKitForUser("owner-1", {
+    generationContext: generationContext(),
+    pipelineResult: pipelineResult(),
+  });
+  const before = structuredClone(documents[0]);
+  database.collection("kits").updateOne = async () => ({ matchedCount: 0 });
+
+  await assert.rejects(
+    service.updateKitForUser("owner-1", created.id, { company: { ...created.company, summary: "partial" } }, created.updatedAt),
+    (error) => error.code === "KIT_UPDATE_CONFLICT" && error.statusCode === 409,
+  );
+  assert.deepEqual(documents[0], before);
 });
 
 test("lists and retrieves kits only for the authenticated owner", async () => {

@@ -1,4 +1,5 @@
 const { ObjectId } = require("mongodb");
+const crypto = require("node:crypto");
 const { AppError } = require("../utils/errors");
 
 function defaultGetDatabase() {
@@ -17,6 +18,23 @@ function cloneData(value) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneData(item)]));
   }
   return value;
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+  }
+  return value;
+}
+
+function fingerprintGenerationRequest(request) {
+  return crypto.createHash("sha256").update(JSON.stringify(canonicalize({
+    generationContext: request.generationContext,
+    candidateContext: request.candidateContext ?? null,
+    githubContext: request.githubContext ?? null,
+    daysAvailable: request.daysAvailable ?? null,
+  }))).digest("hex");
 }
 
 function normalizeGeneratedItems(kit) {
@@ -48,6 +66,10 @@ function createKitService({
       indexesPromise = Promise.all([
         collection.createIndex({ userId: 1, kitId: 1 }),
         collection.createIndex({ userId: 1, createdAt: -1 }),
+        collection.createIndex(
+          { userId: 1, requestFingerprint: 1 },
+          { unique: true, partialFilterExpression: { requestFingerprint: { $type: "string" } } },
+        ),
       ]).catch((error) => {
         indexesPromise = undefined;
         throw error;
@@ -57,7 +79,7 @@ function createKitService({
     return collection;
   }
 
-  async function createKitForUser(userId, { generationContext, pipelineResult } = {}) {
+  async function createKitForUser(userId, { generationContext, pipelineResult, requestFingerprint } = {}) {
     const collection = await getCollection();
     const timestamp = now();
     const kitId = createKitId();
@@ -65,6 +87,7 @@ function createKitService({
     const document = {
       kitId,
       userId,
+      ...(requestFingerprint ? { requestFingerprint } : {}),
       title,
       company: pickFields(generationContext.company, [
         "name", "url", "summary", "what_they_do", "products_services", "industry_domain", "careers_information",
@@ -86,8 +109,21 @@ function createKitService({
       updatedAt: timestamp,
     };
 
-    await collection.insertOne(document);
+    try {
+      await collection.insertOne(document);
+    } catch (error) {
+      if (error?.code === 11000 && requestFingerprint) {
+        const duplicate = await collection.findOne({ userId, requestFingerprint });
+        if (duplicate) return toKitResponse(duplicate);
+      }
+      throw error;
+    }
     return toKitResponse(document);
+  }
+
+  async function getKitForRequest(userId, requestFingerprint) {
+    const kit = await (await getCollection()).findOne({ userId, requestFingerprint });
+    return kit ? toKitResponse(kit) : null;
   }
 
   async function listKitsForUser(userId) {
@@ -130,7 +166,7 @@ function createKitService({
     return toKitResponse(updated);
   }
 
-  return { createKitForUser, listKitsForUser, getKitForUser, updateKitForUser };
+  return { createKitForUser, getKitForRequest, listKitsForUser, getKitForUser, updateKitForUser };
 }
 
 function toKitSummary(kit) {
@@ -167,6 +203,8 @@ const defaultService = createKitService();
 module.exports = {
   createKitService,
   createKitForUser: defaultService.createKitForUser,
+  getKitForRequest: defaultService.getKitForRequest,
+  fingerprintGenerationRequest,
   getKitForUser: defaultService.getKitForUser,
   listKitsForUser: defaultService.listKitsForUser,
   updateKitForUser: defaultService.updateKitForUser,

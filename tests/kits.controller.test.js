@@ -158,6 +158,43 @@ test("POST creates a kit through the existing pipeline and binds ownership to th
   assert.equal(Object.hasOwn(calls.create[0][1], "userId"), false);
 });
 
+test("returns an existing exact request without generating or persisting another kit", async () => {
+  let generationCalls = 0;
+  let createCalls = 0;
+  const saved = { id: validKitId, title: "Acme â€” Engineer" };
+  let savedFingerprint;
+  const controller = createKitsController({
+    generate: async () => { generationCalls += 1; return completePipelineResult(); },
+    service: {
+      getKitForRequest: async (userId, fingerprint) => userId === "owner" && fingerprint === savedFingerprint ? saved : null,
+      createKitForUser: async (userId, values) => {
+        createCalls += 1;
+        savedFingerprint = values.requestFingerprint;
+        return saved;
+      },
+    },
+  });
+  const req = {
+    user: { _id: "owner" },
+    body: {
+      generationContext: generationContext(),
+      candidateContext: { skills: ["Node.js"] },
+      daysAvailable: 3,
+    },
+  };
+
+  const firstResponse = response();
+  await controller.createKit(req, firstResponse);
+  const replayResponse = response();
+  await controller.createKit(req, replayResponse);
+
+  assert.equal(firstResponse.statusCode, 201);
+  assert.equal(replayResponse.statusCode, 200);
+  assert.deepEqual(replayResponse.body, { kit: saved });
+  assert.equal(generationCalls, 1);
+  assert.equal(createCalls, 1);
+});
+
 test("does not persist when generation fails or the final result is incomplete", async () => {
   let writes = 0;
   const service = {
@@ -182,6 +219,44 @@ test("does not persist when generation fails or the final result is incomplete",
     incomplete.createKit({ user: { _id: "user-1" }, body: { generationContext: generationContext(), daysAvailable: 2 } }, response()),
     (error) => error.code === "INCOMPLETE_KIT" && error.statusCode === 422,
   );
+  assert.equal(writes, 0);
+});
+
+test("does not persist invalid output or coverage and schedule failures", async () => {
+  let writes = 0;
+  const service = {
+    createKitForUser: async () => { writes += 1; },
+    listKitsForUser: async () => [],
+    getKitForUser: async () => null,
+  };
+  const cases = [
+    {
+      generate: async () => ({
+        ...completePipelineResult(),
+        kit: { ...completePipelineResult().kit, technical_questions: [{ invalid: true }] },
+      }),
+      expectedCode: "INVALID_GENERATED_KIT",
+    },
+    {
+      generate: async () => { throw new AppError("Coverage failed", "COVERAGE_ERROR", 422); },
+      expectedCode: "COVERAGE_ERROR",
+    },
+    {
+      generate: async () => { throw new AppError("Schedule failed", "SCHEDULE_ERROR", 422); },
+      expectedCode: "SCHEDULE_ERROR",
+    },
+  ];
+
+  for (const { generate, expectedCode } of cases) {
+    const controller = createKitsController({ service, generate });
+    await assert.rejects(
+      controller.createKit({
+        user: { _id: "user-1" },
+        body: { generationContext: generationContext(), daysAvailable: 2 },
+      }, response()),
+      (error) => error.code === expectedCode,
+    );
+  }
   assert.equal(writes, 0);
 });
 

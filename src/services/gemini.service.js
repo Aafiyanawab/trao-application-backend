@@ -246,14 +246,36 @@ function extractResponseText(payload) {
   return parts.map((part) => (typeof part?.text === "string" ? part.text : "")).join("").trim() || null;
 }
 
+function retryAfterDelay(headers, now) {
+  if (!headers) return null;
+  const value = typeof headers.get === "function"
+    ? headers.get("retry-after")
+    : Object.entries(headers).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const timestamp = Date.parse(String(value));
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - now()) : null;
+}
+
 function createGeminiService({
   getApiKey = () => process.env.GEMINI_API_KEY,
   request = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  maxRetries = 2,
+  backoffMs = 100,
+  maxRetryAfterMs = 2000,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  now = Date.now,
 } = {}) {
   if (typeof getApiKey !== "function") throw new TypeError("getApiKey must be a function");
   if (typeof request !== "function") throw new TypeError("request must be a function");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be a positive integer");
+  if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 5) throw new TypeError("maxRetries must be an integer between 0 and 5");
+  if (!Number.isInteger(backoffMs) || backoffMs < 0 || backoffMs > 5000) throw new TypeError("backoffMs must be an integer between 0 and 5000");
+  if (!Number.isInteger(maxRetryAfterMs) || maxRetryAfterMs < 0 || maxRetryAfterMs > 10000) throw new TypeError("maxRetryAfterMs must be an integer between 0 and 10000");
+  if (typeof sleep !== "function") throw new TypeError("sleep must be a function");
+  if (typeof now !== "function") throw new TypeError("now must be a function");
 
   async function generateInterviewContent(input) {
     validateGenerationContext(input);
@@ -275,7 +297,7 @@ function createGeminiService({
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(configuredModel)}:generateContent`;
-      const response = await request(endpoint, {
+      const requestOptions = {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -294,7 +316,16 @@ function createGeminiService({
               responseSchema: GENERATION_RESPONSE_SCHEMA,
             },
           }),
-      });
+      };
+      let response;
+      for (let attempt = 0; ; attempt += 1) {
+        response = await request(endpoint, requestOptions);
+        if (response?.status !== 429 || attempt >= maxRetries) break;
+        const retryAfter = retryAfterDelay(response.headers, now);
+        const delay = retryAfter ?? Math.min(backoffMs * (2 ** attempt), maxRetryAfterMs);
+        if (delay > maxRetryAfterMs) break;
+        await sleep(delay);
+      }
       if (!response || response.ok !== true) {
         throw appError("Gemini could not generate interview content", "GEMINI_API_ERROR", 502);
       }

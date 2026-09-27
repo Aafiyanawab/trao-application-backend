@@ -1,4 +1,5 @@
 const kitService = require("../services/kit.service");
+const { fingerprintGenerationRequest } = kitService;
 const { generateWithCoverageAndSchedule } = require("../services/coverage-schedule.service");
 const { generateInterviewKit } = require("../services/interview-generation.service");
 const { validateGeneratedInterviewKit } = require("../services/generated-kit-validation.service");
@@ -110,18 +111,34 @@ function createKitsController({
 
   async function createKit(req, res) {
     const body = req.body ?? {};
+    const request = {
+      generationContext: body.generationContext,
+      candidateContext: body.candidateContext ?? null,
+      githubContext: body.githubContext ?? null,
+      daysAvailable: body.daysAvailable ?? null,
+    };
+    const requestFingerprint = fingerprintGenerationRequest(request);
+    if (typeof service.getKitForRequest === "function") {
+      const existing = await service.getKitForRequest(req.user._id, requestFingerprint);
+      if (existing) {
+        res.json({ kit: existing });
+        return;
+      }
+    }
     const pipelineResult = await generate({
       generationContext: body.generationContext,
       candidateContext: body.candidateContext,
       githubContext: body.githubContext,
       daysAvailable: body.daysAvailable,
     });
+    validate(pipelineResult?.kit, { generationContext: body.generationContext });
     if (!pipelineResult?.schedule || !pipelineResult.coverage?.all_must_requirements_covered) {
       throw new AppError("The interview kit is incomplete and cannot be saved", "INCOMPLETE_KIT", 422);
     }
     const savedKit = await service.createKitForUser(req.user._id, {
       generationContext: body.generationContext,
       pipelineResult,
+      requestFingerprint,
     });
     res.status(201).json({ kit: savedKit });
   }

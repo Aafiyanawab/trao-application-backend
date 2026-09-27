@@ -179,7 +179,23 @@ function extractRequestedRole(userJd) {
     const match = line.match(pattern);
     if (match && match[1].trim()) return match[1].trim().replace(/\s+/g, " ");
   }
-  return null;
+
+  const firstMeaningfulLine = userJd.split(/\r?\n/).find((line) => line.trim())?.trim();
+  if (!firstMeaningfulLine || firstMeaningfulLine.length > 64 || /[.!?;,:]/.test(firstMeaningfulLine)) {
+    return null;
+  }
+
+  const normalizedTitle = normalizeForComparison(firstMeaningfulLine);
+  const titleWords = normalizedTitle.split(/\s+/);
+  const startsLikeSentence = /^(?:a|an|the|we|i|our|join|looking|seeking|about|responsibilities|requirements|qualifications|description|overview|experienced|motivated|qualified)\b/i;
+  const titleEnding = /\b(?:engineers?|engineering|developers?|architects?|administrators?|analysts?|scientists?|designers?|managers?|consultants?|specialists?|interns?|technicians?|researchers?|coordinators?|directors?|strategists?|recruiters?|operators?|officers?|executives?|owners?|nurses?|accountants?|writers?|editors?|planners?)(?:\s+(?:i|ii|iii|iv|v|1|2|3))?$/i;
+  if (titleWords.length < 2 || titleWords.length > 6
+    || startsLikeSentence.test(normalizedTitle)
+    || !titleEnding.test(normalizedTitle)) {
+    return null;
+  }
+
+  return firstMeaningfulLine.replace(/\s+/g, " ");
 }
 
 module.exports = {

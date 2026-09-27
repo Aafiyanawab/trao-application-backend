@@ -29,8 +29,15 @@ function page(url, { title = "", text = "", headings = [], links = [] } = {}) {
 
 function createResearch(pagesByUrl, options = {}) {
   const requested = [];
+  const robotsRequested = [];
   const service = createCompanyResearchService({
     maxPages: options.maxPages ?? 6,
+    fetchRobots: async (url) => {
+      robotsRequested.push(url);
+      return options.fetchRobots
+        ? options.fetchRobots(url)
+        : { status: 404, text: "" };
+    },
     fetchPage: async (url) => {
       requested.push(url);
       const result = pagesByUrl[url];
@@ -40,7 +47,7 @@ function createResearch(pagesByUrl, options = {}) {
     },
   });
 
-  return { researchCompany: service.researchCompany, requested };
+  return { researchCompany: service.researchCompany, requested, robotsRequested };
 }
 
 const homeUrl = "https://acme.example.com/";
@@ -57,6 +64,70 @@ test("researches the supplied company homepage first", async () => {
   assert.equal(result.company.summary, "Software for logistics teams.");
 });
 
+test("allows a page when robots.txt permits it or returns 404", async () => {
+  const { researchCompany, requested, robotsRequested } = createResearch({
+    [homeUrl]: page(homeUrl, { text: "Company research evidence." }),
+  }, {
+    fetchRobots: async () => ({ status: 200, text: "User-agent: *\nDisallow: /private\nAllow: /" }),
+  });
+  const result = await researchCompany(input());
+
+  assert.deepEqual(robotsRequested, [homeUrl]);
+  assert.deepEqual(requested, [homeUrl]);
+  assert.equal(result.company.summary, "Company research evidence.");
+
+  const noRobots = createResearch({ [homeUrl]: page(homeUrl, { text: "No robots file." }) });
+  const noRobotsResult = await noRobots.researchCompany(input());
+  assert.deepEqual(noRobots.requested, [homeUrl]);
+  assert.equal(noRobotsResult.company.summary, "No robots file.");
+});
+
+test("skips a robots-disallowed homepage and returns an honest warning", async () => {
+  const { researchCompany, requested } = createResearch({
+    [homeUrl]: page(homeUrl, { text: "Must not be fetched." }),
+  }, {
+    fetchRobots: async () => ({ status: 200, text: "User-agent: *\nDisallow: /" }),
+  });
+  const result = await researchCompany(input());
+
+  assert.deepEqual(requested, []);
+  assert.deepEqual(result.pages_used, []);
+  assert.equal(result.warnings.some((warning) => warning.code === "ROBOTS_DISALLOW"), true);
+});
+
+test("skips disallowed discovered pages while preserving already collected evidence", async () => {
+  const aboutUrl = "https://acme.example.com/about";
+  const { researchCompany, requested } = createResearch({
+    [homeUrl]: page(homeUrl, {
+      text: "Homepage evidence retained.",
+      links: [{ href: "/about", text: "About" }],
+    }),
+    [aboutUrl]: page(aboutUrl, { text: "Must not be fetched." }),
+  }, {
+    fetchRobots: async () => ({ status: 200, text: "User-agent: *\nDisallow: /about" }),
+  });
+  const result = await researchCompany(input());
+
+  assert.deepEqual(requested, [homeUrl]);
+  assert.deepEqual(result.pages_used, [homeUrl]);
+  assert.equal(result.company.summary, "Homepage evidence retained.");
+  assert.equal(result.warnings.some((warning) => warning.code === "ROBOTS_DISALLOW" && warning.url === aboutUrl), true);
+});
+
+test("skips pages conservatively when robots.txt cannot be retrieved", async () => {
+  const { researchCompany, requested } = createResearch({
+    [homeUrl]: page(homeUrl, { text: "Must not be fetched." }),
+  }, {
+    fetchRobots: async () => { throw new Error("mocked network failure"); },
+  });
+  const result = await researchCompany(input());
+
+  assert.deepEqual(requested, []);
+  assert.equal(result.pages_used.length, 0);
+  assert.equal(result.warnings.some((warning) => warning.code === "ROBOTS_UNAVAILABLE"), true);
+  assert.equal(result.warnings.some((warning) => warning.code === "ROBOTS_DISALLOW"), false);
+});
+
 test("uses explicit homepage site metadata when company_name is omitted", async () => {
   const { researchCompany } = createResearch({
     [homeUrl]: { ...page(homeUrl, { text: "Company homepage" }), site_name: "Acme & Co" },
@@ -65,14 +136,26 @@ test("uses explicit homepage site metadata when company_name is omitted", async 
   assert.equal(result.company.name, "Acme & Co");
 });
 
-test("does not guess company name from hostname or page title", async () => {
+test("accepts application-name from the homepage metadata as explicit identity", async () => {
   const { researchCompany } = createResearch({
-    [homeUrl]: page(homeUrl, { title: "Acme Systems", text: "Company homepage" }),
+    [homeUrl]: { ...page(homeUrl, { text: "Company homepage" }), site_name: "Acme Application" },
   });
-  await assert.rejects(
-    researchCompany(input({ company_name: undefined })),
-    (error) => error.code === "COMPANY_NAME_UNAVAILABLE",
-  );
+  const result = await researchCompany(input({ company_name: undefined }));
+
+  assert.equal(result.company.name, "Acme Application");
+});
+
+test("keeps reachable research when site-name metadata is absent without guessing identity", async () => {
+  const { researchCompany } = createResearch({
+    [homeUrl]: page(homeUrl, { title: "Acme Systems", text: "Acme builds routing software for logistics teams." }),
+  });
+  const result = await researchCompany(input({ company_name: undefined }));
+
+  assert.equal(result.company.name, null);
+  assert.equal(result.company.summary, "Acme builds routing software for logistics teams.");
+  assert.equal(result.company.sources[0].title, "Acme Systems");
+  assert.equal(result.warnings.some((warning) => warning.code === "COMPANY_IDENTITY_UNAVAILABLE"), true);
+  assert.equal(result.warnings.some((warning) => warning.code === "PUBLIC_DISCUSSION_UNAVAILABLE"), true);
 });
 
 test("extracts company information from discovered about and products pages", async () => {
@@ -266,7 +349,10 @@ test("uses the supplied retrieval adapter for every fetched page", async () => {
       ? page(homeUrl, { links: [{ href: "/about", text: "About" }] })
       : page(url, { text: "About" }));
   };
-  const securedService = createCompanyResearchService({ fetchPage: securedFetchAdapter });
+  const securedService = createCompanyResearchService({
+    fetchPage: securedFetchAdapter,
+    fetchRobots: async () => ({ status: 404, text: "" }),
+  });
 
   await securedService.researchCompany(input());
   assert.deepEqual(fetchedThroughAdapter, [homeUrl, "https://acme.example.com/about"]);
@@ -309,4 +395,23 @@ test("records unavailable pages without losing user-provided JD", async () => {
   assert.equal(result.pages_used.length, 0);
   assert.equal(result.warnings[0].message, "This company page could not be retrieved.");
   assert.equal(JSON.stringify(result).includes("Internal socket details"), false);
+});
+
+test("preserves collected evidence when a later page is rate limited", async () => {
+  const aboutUrl = "https://acme.example.com/about";
+  const limited = new AppError("Rate limit", "HTTP_RATE_LIMITED", 429);
+  const { researchCompany, requested } = createResearch({
+    [homeUrl]: page(homeUrl, {
+      text: "Homepage evidence retained.",
+      links: [{ href: "/about", text: "About" }],
+    }),
+    [aboutUrl]: limited,
+  });
+  const result = await researchCompany(input());
+
+  assert.deepEqual(requested, [homeUrl, aboutUrl]);
+  assert.equal(result.company.summary, "Homepage evidence retained.");
+  assert.deepEqual(result.pages_used, [homeUrl]);
+  assert.ok(result.warnings.some((warning) => warning.code === "HTTP_RATE_LIMITED"));
+  assert.ok(result.warnings.some((warning) => warning.code === "PUBLIC_DISCUSSION_UNAVAILABLE"));
 });
