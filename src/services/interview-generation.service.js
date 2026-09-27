@@ -52,6 +52,13 @@ const SECOND_PASS_INSTRUCTIONS = [
   "Preserve candidate and GitHub evidence rules. Do not invent candidate experience or unsupported facts.",
   "Return empty interviewer_questions, interview_tips, and follow_up_guidance arrays in this repair response.",
 ];
+const SECTION_REGENERATION_INSTRUCTIONS = [
+  "Regenerate only the single section named in section_regeneration.section. Return empty arrays for every other generated section.",
+  "Do not include section_regeneration.preserved_items in the generated replacement. Avoid duplicating their content; the application will preserve those user-created or edited items.",
+  "For company_brief, return the requested fields in company_brief and keep all generated arrays empty. Use only facts present in generation_context; do not invent company claims.",
+  "For question or flashcard sections, preserve the existing structured item schema and use only real requirement IDs from generation_context.requirements.",
+];
+const REGENERATABLE_SECTIONS = ["technical_questions", "non_technical_questions", "flashcards", "company_brief"];
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -213,14 +220,18 @@ function cloneData(value) {
 
 function buildGenerationInput(generationContext, candidateContext, githubContext, generationOptions = {}) {
   const secondPassContext = generationOptions?.secondPass;
+  const sectionRegeneration = generationOptions?.sectionRegeneration;
   return {
     generation_instructions: secondPassContext
       ? [...GENERATION_INSTRUCTIONS, ...SECOND_PASS_INSTRUCTIONS]
-      : GENERATION_INSTRUCTIONS.slice(),
+      : sectionRegeneration
+        ? [...GENERATION_INSTRUCTIONS, ...SECTION_REGENERATION_INSTRUCTIONS]
+        : GENERATION_INSTRUCTIONS.slice(),
     generation_context: cloneData(generationContext),
     candidate_context: candidateContext == null ? null : cloneData(candidateContext),
     github_context: githubContext == null ? null : cloneData(githubContext),
     ...(secondPassContext ? { second_pass_context: cloneData(secondPassContext) } : {}),
+    ...(sectionRegeneration ? { section_regeneration: cloneData(sectionRegeneration) } : {}),
   };
 }
 
@@ -245,6 +256,16 @@ function createInterviewGenerationService({ generateContent = generateInterviewC
     if (generationOptions?.secondPass !== undefined && !isPlainObject(generationOptions.secondPass)) {
       details.push({ path: "generationOptions.secondPass", message: "must be an object" });
     }
+    if (generationOptions?.sectionRegeneration !== undefined) {
+      if (!isPlainObject(generationOptions.sectionRegeneration)) {
+        details.push({ path: "generationOptions.sectionRegeneration", message: "must be an object" });
+      } else if (!REGENERATABLE_SECTIONS.includes(generationOptions.sectionRegeneration.section)) {
+        details.push({ path: "generationOptions.sectionRegeneration.section", message: "is not supported" });
+      }
+      if (generationOptions?.secondPass !== undefined) {
+        details.push({ path: "generationOptions", message: "secondPass and sectionRegeneration cannot be combined" });
+      }
+    }
     if (details.length > 0) throw validationError(details);
 
     const generationInput = buildGenerationInput(generationContext, candidateContext, githubContext, generationOptions);
@@ -263,6 +284,7 @@ const defaultService = createInterviewGenerationService();
 
 module.exports = {
   GENERATION_INSTRUCTIONS,
+  REGENERATABLE_SECTIONS,
   buildGenerationInput,
   createInterviewGenerationService,
   generateInterviewKit: defaultService.generateInterviewKit,

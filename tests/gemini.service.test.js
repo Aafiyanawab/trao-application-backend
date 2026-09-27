@@ -5,6 +5,7 @@ const {
   GENERATION_RESPONSE_SCHEMA,
   QUESTION_CATEGORIES,
   createGeminiService,
+  validateGenerationResponse,
 } = require("../src/services/gemini.service");
 
 const originalGeminiModel = process.env.GEMINI_MODEL;
@@ -147,6 +148,7 @@ test("uses only the explicitly configured model and Gemini structured-output con
     const body = JSON.parse(requestCalls[0].requestOptions.body);
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(body.generationConfig.responseSchema, GENERATION_RESPONSE_SCHEMA);
+    assert.equal(body.generationConfig.responseSchema.required.includes("company_brief"), false);
     assert.ok(GENERATION_RESPONSE_SCHEMA.properties.technical_questions.items.required.includes("requirement_ids"));
     assert.equal(GENERATION_RESPONSE_SCHEMA.properties.technical_questions.items.properties.requirement_ids.type, "ARRAY");
     assert.deepEqual(GENERATION_RESPONSE_SCHEMA.properties.flashcards.items.required, [
@@ -154,6 +156,24 @@ test("uses only the explicitly configured model and Gemini structured-output con
     ]);
     assert.ok(QUESTION_CATEGORIES.includes("company_fit"));
   });
+});
+
+test("accepts only supported company brief fields in the optional structured response extension", () => {
+  const content = generatedContent();
+  content.company_brief = {
+    summary: "Acme builds software.",
+    what_they_do: "Builds tools.",
+    products_services: "A platform.",
+    industry_domain: "Software.",
+    careers_information: "Engineering roles.",
+  };
+  assert.equal(validateGenerationResponse(content, generationContext().requirements), content);
+
+  content.company_brief.api_key = "must be rejected";
+  assert.throws(
+    () => validateGenerationResponse(content, generationContext().requirements),
+    (error) => error.code === "GENERATION_SCHEMA_ERROR",
+  );
 });
 
 test("rejects malformed flashcards from Gemini", async () => {

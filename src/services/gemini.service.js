@@ -39,6 +39,17 @@ const flashcardSchema = {
   propertyOrdering: ["id", "front", "back", "requirement_ids"],
 };
 
+const companyBriefSchema = {
+  type: "OBJECT",
+  properties: {
+    summary: { type: "STRING" },
+    what_they_do: { type: "STRING" },
+    products_services: { type: "STRING" },
+    industry_domain: { type: "STRING" },
+    careers_information: { type: "STRING" },
+  },
+};
+
 const GENERATION_RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
@@ -48,6 +59,7 @@ const GENERATION_RESPONSE_SCHEMA = {
     interview_tips: { type: "ARRAY", items: { type: "STRING" } },
     follow_up_guidance: { type: "ARRAY", items: { type: "STRING" } },
     flashcards: { type: "ARRAY", items: flashcardSchema },
+    company_brief: companyBriefSchema,
   },
   required: [
     "technical_questions",
@@ -171,6 +183,21 @@ function validateGenerationResponse(value, requirements = []) {
           details.push({ path: `${field}[${index}]`, message: "must be a non-empty string" });
         }
       });
+    }
+  }
+
+  if (value.company_brief !== undefined) {
+    const briefFields = ["summary", "what_they_do", "products_services", "industry_domain", "careers_information"];
+    if (!isPlainObject(value.company_brief)) {
+      details.push({ path: "company_brief", message: "must be an object" });
+    } else {
+      for (const [field, briefValue] of Object.entries(value.company_brief)) {
+        if (!briefFields.includes(field)) {
+          details.push({ path: `company_brief.${field}`, message: "is not supported" });
+        } else if (typeof briefValue !== "string") {
+          details.push({ path: `company_brief.${field}`, message: "must be a string" });
+        }
+      }
     }
   }
 

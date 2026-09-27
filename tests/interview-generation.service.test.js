@@ -90,6 +90,23 @@ test("constructs Gemini input from generation context and candidate context", as
   assert.deepEqual(calls[0].candidate_context, candidate);
 });
 
+test("passes a requested section and preserved item metadata through the generation boundary", async () => {
+  const candidate = { projects: [{ name: "Transit Planner" }] };
+  const github = { repositories: [{ name: "route-engine" }] };
+  const preservedItems = [{ id: "q-user", question: "My question?", origin: "user", edited: true }];
+  const { generateInterviewKit, calls } = mockService();
+
+  await generateInterviewKit(generationContext(), candidate, github, {
+    sectionRegeneration: { section: "technical_questions", preservedItems },
+  });
+
+  assert.equal(calls[0].section_regeneration.section, "technical_questions");
+  assert.deepEqual(calls[0].section_regeneration.preservedItems, preservedItems);
+  assert.deepEqual(calls[0].candidate_context, candidate);
+  assert.deepEqual(calls[0].github_context, github);
+  assert.ok(calls[0].generation_instructions.some((line) => line.includes("Regenerate only the single section")));
+});
+
 test("connects the real generation and Gemini services with optional candidate and GitHub evidence", async () => {
   const previousModel = process.env.GEMINI_MODEL;
   process.env.GEMINI_MODEL = "gemini-offline-test";
