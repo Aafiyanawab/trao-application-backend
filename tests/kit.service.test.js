@@ -80,6 +80,8 @@ test("persists the final pipeline result and returns a safe reopenable kit", asy
   assert.equal(Object.hasOwn(documents[0].requirements[0], "passwordHash"), false);
   assert.deepEqual(documents[0].kit.technical_questions, pipelineResult().kit.technical_questions.map((item) => ({ ...item, origin: "generated", edited: false })));
   assert.deepEqual(documents[0].kit.flashcards, pipelineResult().kit.flashcards.map((item) => ({ ...item, origin: "generated", edited: false })));
+  assert.deepEqual(documents[0].practice, {});
+  assert.deepEqual(result.practice, {});
   assert.deepEqual(documents[0].coverage, pipelineResult().coverage);
   assert.deepEqual(documents[0].schedule, pipelineResult().schedule);
   assert.equal(documents[0].createdAt, timestamp);

@@ -95,12 +95,18 @@ function builderHarness({ generateSection, now = () => new Date("2026-02-01T00:0
     generate: async () => completePipelineResult(),
     generateSection,
     createItemId: (() => { let id = 0; return () => `user-item-${++id}`; })(),
+    now,
   });
   return { controller, document, writes, userId };
 }
 
 function builderRequest(userId, body = {}, extras = {}) {
-  return { user: { _id: userId }, params: { id: validKitId, itemId: extras.itemId }, query: extras.query ?? {}, body };
+  return {
+    user: { _id: userId },
+    params: { id: validKitId, itemId: extras.itemId, flashcardId: extras.flashcardId },
+    query: extras.query ?? {},
+    body,
+  };
 }
 
 function generatedSection(section) {
@@ -456,4 +462,93 @@ test("can regenerate the company brief and deterministic schedule as isolated se
   assert.equal(document.schedule.days_available, 3);
   assert.equal(document.schedule.days.length, 3);
   assert.deepEqual(document.kit, questionsBefore);
+});
+
+test("practice session returns front and back with explicit uncovered state and hides persistence metadata", async () => {
+  const { controller, document, userId } = builderHarness();
+  document.practice = { f2: { confidence: 3, covered: true, lastPracticedAt: new Date("2026-01-01T00:00:00Z") } };
+  const res = response();
+  await controller.getPracticeSession(builderRequest(userId), res);
+
+  assert.equal(res.body.items[0].flashcard.id, "f1");
+  assert.equal(res.body.items[0].flashcard.front, "Original front?");
+  assert.equal(res.body.items[0].flashcard.back, "Original back.");
+  assert.deepEqual(res.body.items[0].flashcard.requirement_ids, ["r1"]);
+  assert.equal(res.body.items[0].covered, false);
+  assert.equal(res.body.items[0].confidence, null);
+  const coveredItem = res.body.items.find((item) => item.flashcard.id === "f2");
+  assert.equal(coveredItem.covered, true);
+  assert.equal(coveredItem.confidence, 3);
+  assert.equal("origin" in res.body.items[0].flashcard, false);
+  assert.equal("edited" in res.body.items[0].flashcard, false);
+  assert.equal("revealed" in res.body.items[0], false);
+});
+
+test("practice ordering is uncovered first, then weakest confidence, oldest attempt, and stable kit order", async () => {
+  const { controller, document, userId } = builderHarness();
+  document.kit.flashcards = [
+    { ...document.kit.flashcards[0], id: "a" },
+    { ...document.kit.flashcards[0], id: "b" },
+    { ...document.kit.flashcards[0], id: "c" },
+    { ...document.kit.flashcards[0], id: "d" },
+    { ...document.kit.flashcards[0], id: "e" },
+  ];
+  document.practice = {
+    a: { confidence: 5, covered: true, lastPracticedAt: new Date("2026-01-01T00:00:00Z") },
+    b: { confidence: 2, covered: true, lastPracticedAt: new Date("2026-01-02T00:00:00Z") },
+    c: { confidence: 2, covered: true, lastPracticedAt: new Date("2026-01-01T00:00:00Z") },
+    d: { confidence: 2, covered: true, lastPracticedAt: new Date("2026-01-01T00:00:00Z") },
+  };
+  const res = response();
+  await controller.getPracticeSession(builderRequest(userId), res);
+  assert.deepEqual(res.body.items.map((item) => item.flashcard.id), ["e", "c", "d", "b", "a"]);
+  assert.equal(res.body.items[0].covered, false);
+});
+
+test("records allowed confidence ratings without changing flashcard or kit data", async () => {
+  for (const confidence of [1, 5]) {
+    const { controller, document, writes, userId } = builderHarness();
+    const kitBefore = structuredClone(document.kit);
+    const scheduleBefore = structuredClone(document.schedule);
+    const coverageBefore = structuredClone(document.coverage);
+    const res = response();
+    await controller.recordPracticeConfidence(builderRequest(userId, { confidence }, { flashcardId: "f1" }), res);
+
+    assert.equal(res.body.practice.confidence, confidence);
+    assert.equal(res.body.practice.covered, true);
+    assert.equal(res.body.practice.lastPracticedAt.toISOString(), "2026-02-01T00:00:01.000Z");
+    assert.deepEqual(document.kit, kitBefore);
+    assert.deepEqual(document.schedule, scheduleBefore);
+    assert.deepEqual(document.coverage, coverageBefore);
+    assert.deepEqual(Object.keys(writes[0].changes), ["practice"]);
+  }
+});
+
+test("rejects malformed confidence values, unknown cards, and client mutation fields without writes", async () => {
+  const { controller, writes, userId } = builderHarness();
+  for (const confidence of [0, 6, 1.5, "5", null]) {
+    await assert.rejects(controller.recordPracticeConfidence(
+      builderRequest(userId, { confidence }, { flashcardId: "f1" }), response(),
+    ), (error) => error.code === "VALIDATION_ERROR");
+  }
+  await assert.rejects(controller.recordPracticeConfidence(
+    builderRequest(userId, { confidence: 3 }, { flashcardId: "unknown" }), response(),
+  ), (error) => error.code === "NOT_FOUND");
+  await assert.rejects(controller.recordPracticeConfidence(
+    builderRequest(userId, { confidence: 3, userId, front: "forged" }, { flashcardId: "f1" }), response(),
+  ), (error) => error.code === "VALIDATION_ERROR");
+  await assert.rejects(controller.recordPracticeConfidence(
+    builderRequest(userId, { confidence: 3 }, { flashcardId: " " }), response(),
+  ), (error) => error.code === "VALIDATION_ERROR");
+  assert.equal(writes.length, 0);
+});
+
+test("practice reads and writes are owner-scoped and use session identity only", async () => {
+  const { controller, writes } = builderHarness();
+  await assert.rejects(controller.getPracticeSession(builderRequest("another-user")), (error) => error.code === "NOT_FOUND");
+  await assert.rejects(controller.recordPracticeConfidence(
+    builderRequest("another-user", { confidence: 4 }, { flashcardId: "f1" }), response(),
+  ), (error) => error.code === "NOT_FOUND");
+  assert.equal(writes.length, 0);
+  assert.equal(kitsRoutes.stack[0].handle, requireAuth);
 });

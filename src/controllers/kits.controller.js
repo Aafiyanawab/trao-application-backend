@@ -101,6 +101,7 @@ function createKitsController({
   validate = validateGeneratedInterviewKit,
   schedule = allocateSchedule,
   createItemId = () => crypto.randomUUID(),
+  now = () => new Date(),
 } = {}) {
   async function listKits(req, res) {
     const kits = await service.listKitsForUser(req.user._id);
@@ -332,11 +333,81 @@ function createKitsController({
     res.json({ kit: updated });
   }
 
+  async function getPracticeSession(req, res) {
+    validateObjectId(req.params.id, "kitId");
+    const existing = await service.getKitForUser(req.user._id, req.params.id);
+    const practice = existing.practice ?? {};
+    const items = existing.kit.flashcards.map((flashcard, index) => {
+      const record = practice[flashcard.id];
+      return {
+        flashcard: {
+          id: flashcard.id,
+          front: flashcard.front,
+          back: flashcard.back,
+          requirement_ids: [...flashcard.requirement_ids],
+        },
+        covered: Boolean(record),
+        confidence: record?.confidence ?? null,
+        lastPracticedAt: record?.lastPracticedAt ?? null,
+        stableOrder: index,
+      };
+    });
+
+    // Deterministic next-session priority: uncovered first, then lowest confidence,
+    // oldest practice time, and finally the flashcard's stable kit order.
+    items.sort((left, right) => {
+      if (left.covered !== right.covered) return left.covered ? 1 : -1;
+      if (left.covered && left.confidence !== right.confidence) return left.confidence - right.confidence;
+      if (left.covered) {
+        const leftTime = new Date(left.lastPracticedAt).getTime();
+        const rightTime = new Date(right.lastPracticedAt).getTime();
+        if (leftTime !== rightTime) return leftTime - rightTime;
+      }
+      return left.stableOrder - right.stableOrder;
+    });
+
+    res.json({ items: items.map(({ stableOrder, ...item }) => item) });
+  }
+
+  async function recordPracticeConfidence(req, res) {
+    validateObjectId(req.params.id, "kitId");
+    const flashcardId = req.params.flashcardId;
+    if (typeof flashcardId !== "string" || flashcardId.trim() === "" || flashcardId.length > 200) {
+      throw validationError("flashcardId", "must be a valid flashcard ID");
+    }
+    if (!isPlainObject(req.body)) throw validationError("body", "must be an object");
+    rejectUnknownFields(req.body, ["confidence"], "body");
+    const confidence = req.body.confidence;
+    if (!Number.isInteger(confidence) || confidence < 1 || confidence > 5) {
+      throw validationError("body.confidence", "must be an integer from 1 to 5");
+    }
+
+    const existing = await service.getKitForUser(req.user._id, req.params.id);
+    if (!existing.kit.flashcards.some((flashcard) => flashcard.id === flashcardId)) {
+      throw new AppError("The requested flashcard was not found", "NOT_FOUND", 404);
+    }
+    const practice = structuredClone(existing.practice ?? {});
+    const lastPracticedAt = new Date(now());
+    practice[flashcardId] = { confidence, covered: true, lastPracticedAt };
+    const updated = await service.updateKitForUser(req.user._id, req.params.id, { practice }, existing.updatedAt);
+    res.json({ practice: updated.practice[flashcardId] });
+  }
+
   function deleteKit(req, res, next) {
     next(new AppError("Deleting entire kits is not implemented", "NOT_IMPLEMENTED", 501));
   }
 
-  return { listKits, createKit, getKit, updateKit, deleteItem, regenerateSection, deleteKit };
+  return {
+    listKits,
+    createKit,
+    getKit,
+    updateKit,
+    deleteItem,
+    regenerateSection,
+    getPracticeSession,
+    recordPracticeConfidence,
+    deleteKit,
+  };
 }
 
 const defaultController = createKitsController();

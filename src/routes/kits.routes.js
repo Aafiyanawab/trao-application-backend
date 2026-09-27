@@ -8,6 +8,8 @@ const router = express.Router();
 router.use(requireAuth);
 router.get("/", kitsController.listKits);
 router.post("/", kitsController.createKit);
+router.get("/:id/practice", kitsController.getPracticeSession);
+router.post("/:id/practice/:flashcardId", kitsController.recordPracticeConfidence);
 router.get("/:id", kitsController.getKit);
 router.patch("/:id", kitsController.updateKit);
 router.post("/:id/regenerate", kitsController.regenerateSection);
