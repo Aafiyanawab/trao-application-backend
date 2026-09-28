@@ -12,7 +12,11 @@ function parseCookies(header = "") {
 
     const key = pair.slice(0, separator).trim();
     const value = pair.slice(separator + 1).trim();
-    cookies[key] = decodeURIComponent(value);
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      cookies[key] = null;
+    }
     return cookies;
   }, {});
 }

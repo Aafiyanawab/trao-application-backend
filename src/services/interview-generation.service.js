@@ -80,6 +80,8 @@ function validateResearchContext(context, details) {
   if (!isPlainObject(context.company)) {
     details.push({ path: "generationContext.company", message: "must be an object" });
   } else {
+    if (typeof context.company.url === "string" && context.company.url.length > 2048) details.push({ path: "generationContext.company.url", message: "must not exceed 2048 characters" });
+    if (typeof context.company.name === "string" && context.company.name.length > 200) details.push({ path: "generationContext.company.name", message: "must not exceed 200 characters" });
     for (const field of ["name", "url"]) {
       if (typeof context.company[field] !== "string" || context.company[field].trim() === "") {
         details.push({ path: `generationContext.company.${field}`, message: "must be a non-empty string" });
@@ -90,6 +92,7 @@ function validateResearchContext(context, details) {
       if (value !== undefined && value !== null && typeof value !== "string") {
         details.push({ path: `generationContext.company.${field}`, message: "must be a string or null" });
       }
+      if (typeof value === "string" && value.length > 10000) details.push({ path: `generationContext.company.${field}`, message: "must not exceed 10000 characters" });
     }
   }
 
@@ -99,6 +102,7 @@ function validateResearchContext(context, details) {
     if (typeof context.role.requested_role !== "string" || context.role.requested_role.trim() === "") {
       details.push({ path: "generationContext.role.requested_role", message: "must be a non-empty string" });
     }
+    if (typeof context.role.requested_role === "string" && context.role.requested_role.length > 200) details.push({ path: "generationContext.role.requested_role", message: "must not exceed 200 characters" });
     if (typeof context.role.matching_role_found !== "boolean") {
       details.push({ path: "generationContext.role.matching_role_found", message: "must be a boolean" });
     }
@@ -108,6 +112,7 @@ function validateResearchContext(context, details) {
     if (typeof context.role.user_jd !== "string") {
       details.push({ path: "generationContext.role.user_jd", message: "must be a string" });
     }
+    if (typeof context.role.user_jd === "string" && context.role.user_jd.length > 20000) details.push({ path: "generationContext.role.user_jd", message: "must not exceed 20000 characters" });
     if (context.role.seniority !== undefined && context.role.seniority !== null && typeof context.role.seniority !== "string") {
       details.push({ path: "generationContext.role.seniority", message: "must be a string or null" });
     }
@@ -134,6 +139,16 @@ function validateResearchContext(context, details) {
         details.push({ path: `generationContext.research.${field}`, message: "must be an array" });
       }
     }
+    if (Array.isArray(context.research.sources) && context.research.sources.length > 100) details.push({ path: "generationContext.research.sources", message: "must not contain more than 100 items" });
+  }
+  if (Array.isArray(context.requirements)) {
+    if (context.requirements.length > 100) details.push({ path: "generationContext.requirements", message: "must not contain more than 100 items" });
+    context.requirements.forEach((requirement, index) => {
+      if (isPlainObject(requirement)) {
+        if (typeof requirement.id === "string" && requirement.id.length > 200) details.push({ path: `generationContext.requirements[${index}].id`, message: "must not exceed 200 characters" });
+        if (typeof requirement.text === "string" && requirement.text.length > 20000) details.push({ path: `generationContext.requirements[${index}].text`, message: "must not exceed 20000 characters" });
+      }
+    });
   }
 }
 
@@ -166,7 +181,11 @@ function validateCandidateContext(candidateContext, details) {
 }
 
 function validateJsonValue(value, path, details, activeStack = new Set()) {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    if (value.length > 10000) details.push({ path, message: "must not exceed 10000 characters" });
+    return;
+  }
+  if (value === null || typeof value === "boolean") return;
   if (typeof value === "number" && Number.isFinite(value)) return;
   if (typeof value !== "object") {
     details.push({ path, message: "must contain JSON-compatible data" });

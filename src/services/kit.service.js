@@ -38,7 +38,16 @@ function fingerprintGenerationRequest(request) {
 }
 
 function normalizeGeneratedItems(kit) {
-  const normalized = cloneData(kit);
+  const questionFields = ["id", "question", "answer_outline", "category", "difficulty", "rationale", "requirement_ids"];
+  const flashcardFields = ["id", "front", "back", "requirement_ids"];
+  const normalized = {
+    technical_questions: kit.technical_questions.map((item) => pickFields(item, questionFields)),
+    non_technical_questions: kit.non_technical_questions.map((item) => pickFields(item, questionFields)),
+    interviewer_questions: [...kit.interviewer_questions],
+    interview_tips: [...kit.interview_tips],
+    follow_up_guidance: [...kit.follow_up_guidance],
+    flashcards: kit.flashcards.map((item) => pickFields(item, flashcardFields)),
+  };
   for (const section of ["technical_questions", "non_technical_questions", "flashcards"]) {
     normalized[section] = normalized[section].map((item) => ({
       ...item,

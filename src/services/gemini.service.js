@@ -98,6 +98,11 @@ function validateGenerationContext(input) {
   if (!Array.isArray(context.requirements)) {
     throw appError("Generation context requirements must be an array", "VALIDATION_ERROR", 400);
   }
+  if (context.requirements.length > 100) {
+    throw appError("Generation context requirements are invalid", "VALIDATION_ERROR", 400, [
+      { path: "requirements", message: "must not contain more than 100 items" },
+    ]);
+  }
   if (context.role.seniority !== undefined && context.role.seniority !== null && typeof context.role.seniority !== "string") {
     throw appError("Generation context role seniority is invalid", "VALIDATION_ERROR", 400);
   }
@@ -111,6 +116,7 @@ function validateGenerationContext(input) {
       !isPlainObject(requirement) ||
       typeof requirement.id !== "string" || requirement.id.trim() === "" ||
       typeof requirement.text !== "string" || requirement.text.trim() === "" ||
+      requirement.id.length > 200 || requirement.text.length > 20000 ||
       !["technical", "behavioural", "domain"].includes(requirement.kind) ||
       !["must", "nice"].includes(requirement.priority) ||
       requirementIds.has(requirement.id)

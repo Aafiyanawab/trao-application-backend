@@ -81,10 +81,12 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       } else {
         seenQuestionIds.set(question.id, `${path}.id`);
       }
+      if (typeof question.id === "string" && question.id.length > 200) details.push({ path: `${path}.id`, message: "must not exceed 200 characters" });
 
       if (typeof question.question !== "string" || question.question.trim() === "") {
         details.push({ path: `${path}.question`, message: "must be a non-empty string" });
       } else {
+        if (question.question.length > 10000) details.push({ path: `${path}.question`, message: "must not exceed 10000 characters" });
         const normalized = normalizedText(question.question);
         if (seenQuestionText.has(normalized)) {
           details.push({ path: `${path}.question`, message: `duplicates question text at ${seenQuestionText.get(normalized)}` });
@@ -106,6 +108,7 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       if (typeof question.rationale !== "string" || question.rationale.trim() === "") {
         details.push({ path: `${path}.rationale`, message: "must be a non-empty string" });
       } else {
+        if (question.rationale.length > 10000) details.push({ path: `${path}.rationale`, message: "must not exceed 10000 characters" });
         textValues.push({ path: `${path}.rationale`, value: question.rationale });
       }
       if (question.answer_outline === undefined && options.allowLegacyQuestionContract) {
@@ -113,6 +116,7 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       } else if (typeof question.answer_outline !== "string" || question.answer_outline.trim() === "") {
         details.push({ path: `${path}.answer_outline`, message: "must be a non-empty string" });
       } else {
+        if (question.answer_outline.length > 10000) details.push({ path: `${path}.answer_outline`, message: "must not exceed 10000 characters" });
         textValues.push({ path: `${path}.answer_outline`, value: question.answer_outline });
       }
 
@@ -144,6 +148,7 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       if (typeof item !== "string" || item.trim() === "") {
         details.push({ path, message: "must be a non-empty string" });
       } else {
+        if (item.length > 10000) details.push({ path, message: "must not exceed 10000 characters" });
         textValues.push({ path, value: item });
       }
     });
@@ -165,11 +170,13 @@ function validateGeneratedInterviewKit(generatedKit, options = {}) {
       } else {
         seenFlashcardIds.set(flashcard.id, `${path}.id`);
       }
+      if (typeof flashcard.id === "string" && flashcard.id.length > 200) details.push({ path: `${path}.id`, message: "must not exceed 200 characters" });
 
       for (const field of ["front", "back"]) {
         if (typeof flashcard[field] !== "string" || flashcard[field].trim() === "") {
           details.push({ path: `${path}.${field}`, message: "must be a non-empty string" });
         } else {
+          if (flashcard[field].length > 10000) details.push({ path: `${path}.${field}`, message: "must not exceed 10000 characters" });
           textValues.push({ path: `${path}.${field}`, value: flashcard[field] });
         }
       }

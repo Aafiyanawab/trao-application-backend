@@ -492,6 +492,19 @@ test("does not mutate the generated kit", () => {
   assert.deepEqual(kit, before);
 });
 
+test("accepts the generated text limit and rejects oversized question and flashcard text", () => {
+  const questionBoundary = validKit();
+  questionBoundary.technical_questions[0].answer_outline = "a".repeat(10000);
+  assert.equal(validateGeneratedInterviewKit(questionBoundary, requirementOptions), questionBoundary);
+
+  const oversizedQuestion = validKit();
+  oversizedQuestion.technical_questions[0].question = "a".repeat(10001);
+  assertInvalid(oversizedQuestion, "technical_questions[0].question");
+
+  const oversizedCard = kitWithFlashcard({ ...validFlashcard, back: "b".repeat(10001) });
+  assertInvalid(oversizedCard, "flashcards[0].back");
+});
+
 test("returns deterministic validation behavior for identical input", () => {
   const invalid = validKit();
   invalid.technical_questions[0].difficulty = 5;

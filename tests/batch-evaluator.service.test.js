@@ -1,11 +1,20 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createBatchEvaluator } = require("../src/services/batch-evaluator.service");
+const { createBatchEvaluator, validateBatchInput } = require("../src/services/batch-evaluator.service");
 const { createCompanyResearchService } = require("../src/services/company-research.service");
 const { createWebResearchService } = require("../src/services/web-research.service");
 const { buildGenerationContext } = require("../src/services/generation-context.service");
 
 const testCase = { id: "a", jd: "Job Title: Platform Engineer\nRequirements:\n- Node.js experience", company_url: "https://example.test", days: 2 };
+
+test("batch input accepts documented string limits and rejects oversized JD, URL, and case id", () => {
+  assert.equal(validateBatchInput([{ id: "i".repeat(128), jd: "j".repeat(20000), company_url: `https://${"a".repeat(2040)}`, days: 1 }]).length, 1);
+  for (const input of [
+    [{ id: "i".repeat(129), jd: "JD", company_url: "https://example.test", days: 1 }],
+    [{ id: "case", jd: "j".repeat(20001), company_url: "https://example.test", days: 1 }],
+    [{ id: "case", jd: "JD", company_url: `https://${"a".repeat(2041)}`, days: 1 }],
+  ]) assert.throws(() => validateBatchInput(input), (error) => error.code === "BATCH_INPUT_INVALID");
+});
 
 function deps(overrides = {}) {
   const calls = { research: [], pipeline: [] };

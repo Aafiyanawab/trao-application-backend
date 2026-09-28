@@ -6,6 +6,10 @@ const { AppError } = require("../utils/errors");
 
 const scrypt = promisify(crypto.scrypt);
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const PASSWORD_HASH_VERSION = 2;
+const PASSWORD_HASH_OPTIONS = Object.freeze({ N: 32768, r: 8, p: 3, maxmem: 128 * 1024 * 1024 });
+const LEGACY_PASSWORD_HASH_OPTIONS = Object.freeze({ N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+let sessionIndexesPromise;
 
 function toPublicUser(user) {
   return {
@@ -15,17 +19,32 @@ function toPublicUser(user) {
   };
 }
 
-async function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const derivedKey = await scrypt(password, salt, 64);
-  return { passwordHash: derivedKey.toString("hex"), passwordSalt: salt };
+async function hashPassword(password, salt = crypto.randomBytes(16).toString("hex"), version = PASSWORD_HASH_VERSION) {
+  const options = version === PASSWORD_HASH_VERSION ? PASSWORD_HASH_OPTIONS : LEGACY_PASSWORD_HASH_OPTIONS;
+  const derivedKey = await scrypt(password, salt, 64, options);
+  return { passwordHash: derivedKey.toString("hex"), passwordSalt: salt, passwordHashVersion: version };
 }
 
 async function passwordsMatch(password, user) {
-  const { passwordHash } = await hashPassword(password, user.passwordSalt);
+  const version = user.passwordHashVersion ?? 1;
+  const { passwordHash } = await hashPassword(password, user.passwordSalt, version);
   const expected = Buffer.from(user.passwordHash, "hex");
   const actual = Buffer.from(passwordHash, "hex");
 
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+async function ensureSessionIndexes(database) {
+  if (!sessionIndexesPromise) {
+    sessionIndexesPromise = Promise.all([
+      database.collection("sessions").createIndex({ tokenHash: 1 }, { unique: true }),
+      database.collection("sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    ]).catch((error) => {
+      sessionIndexesPromise = undefined;
+      throw error;
+    });
+  }
+  return sessionIndexesPromise;
 }
 
 function hashSessionToken(token) {
@@ -35,6 +54,7 @@ function hashSessionToken(token) {
 async function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
   const database = getDatabase();
+  await ensureSessionIndexes(database);
 
   await database.collection("sessions").insertOne({
     tokenHash: hashSessionToken(token),
@@ -55,6 +75,7 @@ async function register(email, password) {
   const user = {
     email,
     ...passwordData,
+    passwordHashVersion: PASSWORD_HASH_VERSION,
     createdAt: new Date(),
   };
 
@@ -80,6 +101,14 @@ async function login(email, password) {
 
   if (!user || !(await passwordsMatch(password, user))) {
     throw new AppError("Invalid email or password", "INVALID_CREDENTIALS", 401);
+  }
+
+  if (user.passwordHashVersion === undefined) {
+    const upgraded = await hashPassword(password);
+    await database.collection("users").updateOne(
+      { _id: user._id, passwordHash: user.passwordHash, passwordSalt: user.passwordSalt },
+      { $set: upgraded },
+    );
   }
 
   return {
@@ -121,4 +150,9 @@ module.exports = {
   login,
   getUserBySessionToken,
   deleteSession,
+  hashPassword,
+  passwordsMatch,
+  ensureSessionIndexes,
+  PASSWORD_HASH_OPTIONS,
+  LEGACY_PASSWORD_HASH_OPTIONS,
 };

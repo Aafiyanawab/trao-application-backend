@@ -109,6 +109,22 @@ test("persists the final pipeline result and returns a safe reopenable kit", asy
   });
 });
 
+test("projects generated kit fields onto the persisted schema", async () => {
+  const { database, documents } = fakeDatabase();
+  const service = createKitService({ getDatabase: () => database, createKitId: () => "projection-kit" });
+  const generated = pipelineResult();
+  generated.kit.unexpected = { injected: true };
+  generated.kit.technical_questions[0].admin = true;
+  generated.kit.flashcards[0].script = "unexpected";
+  await service.createKitForUser("owner-1", { generationContext: generationContext(), pipelineResult: generated });
+  assert.equal(Object.hasOwn(documents[0].kit, "unexpected"), false);
+  assert.equal(Object.hasOwn(documents[0].kit.technical_questions[0], "admin"), false);
+  assert.equal(Object.hasOwn(documents[0].kit.flashcards[0], "script"), false);
+  assert.deepEqual(Object.keys(documents[0].kit.technical_questions[0]).sort(), [
+    "answer_outline", "category", "difficulty", "edited", "id", "origin", "question", "rationale", "requirement_ids",
+  ].sort());
+});
+
 test("fingerprints the logical request deterministically without depending on object key order", () => {
   const first = fingerprintGenerationRequest({
     generationContext: { company: { name: "Acme", url: "https://acme.example" }, requirements: [] },

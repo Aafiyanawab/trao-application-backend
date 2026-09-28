@@ -7,6 +7,7 @@ process.env.MONGODB_URI ??= "mongodb://127.0.0.1:27017/trao-auth-test";
 function fakeDatabase() {
   const users = [];
   const sessions = [];
+  const sessionIndexes = [];
   const kits = [];
   let userSequence = 0;
   const usersCollection = {
@@ -22,8 +23,15 @@ function fakeDatabase() {
       return { insertedId: user._id };
     },
     findOne: async (query) => users.find((user) => Object.entries(query).every(([key, value]) => user[key] === value)) ?? null,
+    updateOne: async (query, update) => {
+      const user = users.find((entry) => Object.entries(query).every(([key, value]) => entry[key] === value));
+      if (!user) return { matchedCount: 0 };
+      Object.assign(user, structuredClone(update.$set));
+      return { matchedCount: 1 };
+    },
   };
   const sessionsCollection = {
+    createIndex: async (keys, options) => { sessionIndexes.push({ keys, options }); },
     insertOne: async (document) => { sessions.push(structuredClone(document)); return { insertedId: sessions.length }; },
     findOne: async (query) => sessions.find((session) => session.tokenHash === query.tokenHash
       && session.expiresAt > query.expiresAt.$gt) ?? null,
@@ -54,6 +62,7 @@ function fakeDatabase() {
     database: { collection: (name) => collections[name] },
     users,
     sessions,
+    sessionIndexes,
     kits,
   };
 }
@@ -92,7 +101,7 @@ function tokenFromCookie(header) {
 }
 
 test("covers registration, hashed credentials, sessions, logout, and owner-scoped kit access offline", async () => {
-  const { database, users, sessions, kits } = fakeDatabase();
+  const { database, users, sessions, kits, sessionIndexes } = fakeDatabase();
   const { service, controller, middleware } = loadAuthModules(database);
 
   const registrationResponse = response();
@@ -106,6 +115,10 @@ test("covers registration, hashed credentials, sessions, logout, and owner-scope
   assert.equal(users[0].passwordHash.length, 128);
   assert.equal(users[0].passwordSalt.length, 32);
   assert.equal(sessions.length, 1);
+  assert.deepEqual(sessionIndexes, [
+    { keys: { tokenHash: 1 }, options: { unique: true } },
+    { keys: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
+  ]);
 
   const registrationToken = tokenFromCookie(registrationResponse.headers["Set-Cookie"]);
   const registrationHash = crypto.createHash("sha256").update(registrationToken).digest("hex");
@@ -188,4 +201,27 @@ test("covers registration, hashed credentials, sessions, logout, and owner-scope
   assert.equal(logoutResponse.statusCode, 204);
   assert.match(logoutResponse.headers["Set-Cookie"], /Max-Age=0/);
   assert.equal(await service.getUserBySessionToken(logoutToken), null);
+});
+
+test("upgrades a legacy default-cost scrypt hash after successful login", async () => {
+  const { database, users } = fakeDatabase();
+  const { service } = loadAuthModules(database);
+  const legacy = await service.hashPassword("legacy password", "0123456789abcdef", 1);
+  users.push({ _id: "legacy-user", email: "legacy@example.test", ...legacy, createdAt: new Date() });
+  delete users[0].passwordHashVersion;
+  const result = await service.login("legacy@example.test", "legacy password");
+  assert.equal(result.user.id, "legacy-user");
+  assert.equal(users[0].passwordHashVersion, 2);
+  assert.notEqual(users[0].passwordHash, legacy.passwordHash);
+  assert.equal(await service.passwordsMatch("legacy password", users[0]), true);
+  assert.equal(await service.passwordsMatch("wrong password", users[0]), false);
+});
+
+test("malformed encoded session cookie is treated as unauthenticated", async () => {
+  const { database } = fakeDatabase();
+  const { middleware } = loadAuthModules(database);
+  let error;
+  await middleware.requireAuth({ headers: { cookie: "trao_session=%E0%A4%A" } }, {}, (nextError) => { error = nextError; });
+  assert.equal(error.code, "UNAUTHORIZED");
+  assert.equal(error.statusCode, 401);
 });

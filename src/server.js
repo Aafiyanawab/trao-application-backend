@@ -6,13 +6,14 @@ const cors = require("cors");
 const { connectDatabase } = require("./config/database");
 const authRoutes = require("./routes/auth.routes");
 const kitsRoutes = require("./routes/kits.routes");
+const { createCorsOptions } = require("./middleware/request-protection.middleware");
 const { errorHandler, notFoundHandler } = require("./middleware/error.middleware");
 
 const app = express();
 
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors(createCorsOptions()));
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);

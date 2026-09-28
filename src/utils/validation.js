@@ -11,7 +11,7 @@ function requireString(value, field) {
 
 function validateEmail(value) {
   const email = requireString(value, "email").toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new AppError("email must be valid", "VALIDATION_ERROR", 400);
   }
 
@@ -20,8 +20,8 @@ function validateEmail(value) {
 
 function validatePassword(value) {
   const password = requireString(value, "password");
-  if (password.length < 8) {
-    throw new AppError("password must be at least 8 characters", "VALIDATION_ERROR", 400);
+  if (password.length < 8 || Buffer.byteLength(password, "utf8") > 1024) {
+    throw new AppError("password must be at least 8 characters and at most 1024 bytes", "VALIDATION_ERROR", 400);
   }
 
   return password;
@@ -43,9 +43,15 @@ function validateRegisterPayload(body = {}) {
 }
 
 function validateLoginPayload(body = {}) {
+  const password = requireString(body.password, "password");
+  if (Buffer.byteLength(password, "utf8") > 1024) {
+    throw new AppError("password must not exceed 1024 bytes", "VALIDATION_ERROR", 400, [
+      { path: "password", message: "must not exceed 1024 bytes" },
+    ]);
+  }
   return {
     email: validateEmail(body.email),
-    password: requireString(body.password, "password"),
+    password,
   };
 }
 

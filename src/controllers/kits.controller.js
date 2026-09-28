@@ -37,6 +37,7 @@ function rejectUnknownFields(value, allowed, path) {
 }
 
 function assertSafeText(value, path) {
+  if (value.length > 10000) throw validationError(path, "must not exceed 10000 characters");
   if (SECRET_PATTERNS.some((pattern) => pattern.test(value))) {
     throw validationError(path, "must not contain credentials or secrets");
   }

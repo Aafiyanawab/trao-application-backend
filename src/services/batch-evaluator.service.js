@@ -20,12 +20,12 @@ function validateBatchInput(input) {
     }
     const extra = Object.keys(item).filter((field) => !INPUT_FIELDS.has(field));
     if (extra.length) throw inputError(`${path} contains unsupported fields: ${extra.join(", ")}`);
-    if (typeof item.id !== "string" || !item.id.trim()) throw inputError(`${path}.id must be a non-empty string`);
+    if (typeof item.id !== "string" || !item.id.trim() || item.id.length > 128) throw inputError(`${path}.id must be a non-empty string of at most 128 characters`);
     if (ids.has(item.id)) throw inputError(`Duplicate case id: ${item.id}`);
     ids.add(item.id);
-    if (typeof item.jd !== "string" || !item.jd.trim()) throw inputError(`${path}.jd must be a non-empty string`);
-    if (typeof item.company_url !== "string" || !item.company_url.trim()) {
-      throw inputError(`${path}.company_url must be a non-empty string`);
+    if (typeof item.jd !== "string" || !item.jd.trim() || item.jd.length > 20000) throw inputError(`${path}.jd must be a non-empty string of at most 20000 characters`);
+    if (typeof item.company_url !== "string" || !item.company_url.trim() || item.company_url.length > 2048) {
+      throw inputError(`${path}.company_url must be a non-empty URL of at most 2048 characters`);
     }
     if (!Number.isInteger(item.days) || item.days < 1 || item.days > 60) {
       throw inputError(`${path}.days must be an integer between 1 and 60`);

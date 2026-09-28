@@ -101,12 +101,18 @@ function validateInput(input) {
       details.push({ path: field, message: "must be a non-empty string" });
     }
   }
+  if (typeof input.company_url === "string" && input.company_url.length > 2048) details.push({ path: "company_url", message: "must not exceed 2048 characters" });
+  if (typeof input.role === "string" && input.role.length > 200) details.push({ path: "role", message: "must not exceed 200 characters" });
   if (input.company_name !== undefined && input.company_name !== null
     && (typeof input.company_name !== "string" || input.company_name.trim() === "")) {
     details.push({ path: "company_name", message: "must be a non-empty string when provided" });
   }
+  if (typeof input.company_name === "string" && input.company_name.length > 200) details.push({ path: "company_name", message: "must not exceed 200 characters" });
   if (typeof input.user_jd !== "string") {
     details.push({ path: "user_jd", message: "must be a string" });
+  }
+  if (typeof input.user_jd === "string" && input.user_jd.length > 20000) {
+    details.push({ path: "user_jd", message: "must not exceed 20000 characters" });
   }
   if (details.length > 0) throw validationError(details);
 }
